@@ -9,12 +9,16 @@ import {
 
 const CONTEXT_TYPE = "pi-sieve-context";
 const INPUT_COUNT = 3;
+const AUTH_PROVIDER = "typesafe";
 
 function messageKey(message: { timestamp: number; content: unknown }): string {
   return `${message.timestamp}:${createHash("sha256").update(JSON.stringify(message.content)).digest("hex")}`;
 }
 
 export default function sieve(pi: ExtensionAPI): void {
+  // Register authentication only; Jev is not a main-agent chat model.
+  pi.registerProvider(AUTH_PROVIDER, { name: "TypeSafe", apiKey: "$TYPESAFE_API_KEY", models: [] });
+
   let config: Config = { ...DEFAULTS };
   let enabledOverride: boolean | undefined;
   let catalog: Candidate[] = [];
@@ -133,7 +137,9 @@ export default function sieve(pi: ExtensionAPI): void {
     for (const item of catalog) item.pinned ||= isMentioned(query, item.name);
     request = new AbortController();
     const signal = ctx.signal ? AbortSignal.any([request.signal, ctx.signal]) : request.signal;
-    const selection = await selectCandidates(task, catalog, config, signal);
+    const key = await ctx.modelRegistry.getApiKeyForProvider(AUTH_PROVIDER);
+    if (generation !== runGeneration || signal.aborted) return;
+    const selection = await selectCandidates(task, catalog, config, key, signal);
     if (generation !== runGeneration || signal.aborted) return;
     const liveAfter = pi.getActiveTools();
     if (liveAfter.length !== liveBefore.size || liveAfter.some((name) => !liveBefore.has(name))) {

@@ -1,54 +1,119 @@
 # Pi Sieve
 
-A Jev-powered context and tool selector for Pi agents.
+A Jev-powered context and tool selector for Pi agents. Sieve selects relevant
+memories, command guides, skills, and optional tools for each task. Pi's main
+model continues to plan and execute the work.
 
-Pi Sieve selects local memories, command guides, skills, and optional tools for
-the current task. Pi's main model still plans the work and executes tools.
-Sieve does not generate or approve shell commands.
+**Compatibility:** Pi **0.86.1**, Node **22.19+**. The supported Pi package range
+is `>=0.86.1 <0.87.0`. Thresholds are experimental; real-world speed and accuracy
+gains have not been established.
 
-**Status:** v0.1, tested with Pi **0.86.1** and Node **22.19+**. The package targets
-`@earendil-works/pi-coding-agent >=0.86.1 <0.87.0`. Other Pi releases are not yet
-supported. Selection thresholds are experimental; faster or more accurate
-task completion has not been established by the offline tests.
+## Install
 
-## Install locally
-
-From this checkout:
+Pi Sieve is currently distributed as a local source directory. No public GitHub
+repository or npm release is available yet. Obtain a copy of this directory,
+open a terminal in it, and run:
 
 ```sh
 npm ci --ignore-scripts
-pi -e ./src/index.ts
+pi install .
+pi list
 ```
 
-For persistent installation, run `pi install .` from this checkout, then use
-`/reload` in an existing Pi session. A local installation references the checkout;
-keep it available. No GitHub or npm publication is required.
+This registers the plugin for your user account. Keep the directory in place:
+Pi references local packages without copying them. Start Pi in the project where
+you want to use Sieve, or run `/reload` in an existing session.
 
-Set `TYPESAFE_API_KEY` in your environment or through your secret manager before
-starting Pi. Do not paste a real key into a tracked file, shell example, issue,
-or commit message. Sieve reads the environment directly; it does not load `.env`.
-Missing credentials leave Pi's skills and tools available and use local keyword
-matching for memories and guides.
+For other installation scopes, replace `./path/to/pi-sieve` with the plugin's
+directory and run from your target project:
 
-Review [PRIVACY.md](PRIVACY.md) before enabling cloud selection. Sieve only runs
-automatic selection in projects Pi already trusts; it never grants project trust.
+```sh
+# Install for this project only.
+pi install -l ./path/to/pi-sieve
 
-## Add reference material
+# Or try it for one session without saving an installation.
+pi -e ./path/to/pi-sieve/src/index.ts
+```
 
-In the project where you use Pi, create:
+To remove the user-wide installation, run `pi remove .` from the plugin directory.
+For a project installation, run `pi remove -l ./path/to/pi-sieve` from that project.
+Reload or restart Pi afterward. To update a local installation, update its source
+directory, run `npm ci --ignore-scripts` there, then reload Pi.
+See [Pi package management](https://pi.dev/docs/latest/packages) for details.
+
+## Configure your TypeSafe key
+
+Each user supplies their own key from the [TypeSafe console](https://console.typesafe.ai).
+The plugin contains no shared credential. Review [PRIVACY.md](PRIVACY.md) before
+enabling Jev requests.
+
+### Recommended: Pi login
+
+After installing or reloading the plugin, enter this in interactive Pi:
 
 ```text
-.pi/
-  sieve.json
-  sieve/
-    memories/
-      payment-retries.md
-    guides/
-      test-payments.md
+/login typesafe
 ```
 
-Configuration is optional. Each Markdown reference needs an explicit name and
-an uploadable description:
+Paste your key into Pi's API-key dialog. Pi saves it under `typesafe` in its
+user-level `auth.json` (normally `~/.pi/agent/auth.json`). It applies to the next
+task without restarting Pi and is shared across your projects. Sieve registers
+an authentication provider with no chat models, so your main model is unchanged.
+Saving the key does not validate it with TypeSafe; the next selection request uses it.
+
+Pi creates the credential file with `0600` permissions on Unix, but stores literal
+keys as plain text. Its 0.86.1 login dialog can display the entered text; use the
+secret-manager option below if you need to avoid displaying a key in the terminal.
+To remove the saved credential, run `/logout` and select **TypeSafe**. Pi 0.86.1
+does not accept a provider argument for `/logout`.
+
+### Environment variables and secret managers
+
+For CI or non-interactive Pi, set `TYPESAFE_API_KEY` before starting the process.
+For a temporary setup in **zsh**, this prompt hides the key and keeps it out of
+shell command history:
+
+```zsh
+read -rs 'TYPESAFE_API_KEY?TypeSafe API key: '
+printf '\n'
+export TYPESAFE_API_KEY
+pi
+```
+
+Pi's saved credential takes precedence over `TYPESAFE_API_KEY`. Logging out removes
+the saved credential only; an environment key remains usable. Use `/sieve off` to
+stop automatic selection regardless of the credential source. Restart Pi after
+changing its parent environment; `/reload` does not import new shell variables.
+
+Pi also supports a `!command` in `auth.json` to retrieve a key from a secret
+manager. For example, if you already stored a generic password under the macOS
+Keychain service name `typesafe`, merge this entry into your existing `auth.json`
+without replacing other providers:
+
+```json
+{
+  "typesafe": {
+    "type": "api_key",
+    "key": "!security find-generic-password -ws 'typesafe'"
+  }
+}
+```
+
+Pi executes the command locally and caches its output for the process lifetime;
+restart Pi after rotating that secret. See [Pi authentication](https://pi.dev/docs/latest/providers#key-resolution)
+for environment references and 1Password examples. Sieve uses Pi's credential
+resolver; it does not maintain a second credential file or load `.env`.
+Keys are not accepted in `.pi/sieve.json`.
+
+## Add memories and guides
+
+In the project where you run Pi, create these directories:
+
+```sh
+mkdir -p .pi/sieve/memories .pi/sieve/guides
+```
+
+Add Markdown files with a name, an uploadable description, and a body:
 
 ```markdown
 ---
@@ -62,168 +127,102 @@ Verify that retrying an idempotency key does not create another payment.
 Check the current implementation before relying on this note.
 ```
 
-The description is sent to Jev; the body is not. There is no automatic summary
-generation. Selected bodies are supplied to Pi's main model as reference data.
-Use `AGENTS.md` for mandatory project instructions: Sieve never filters those.
-
 See the fictional [memory](examples/memories/payment-retries.md) and
-[command guide](examples/guides/test-payments.md). Examples are not automatically
-loaded. Files without valid metadata, symlinks, and files over 64 KiB are skipped.
-Discovery is bounded to 1,000 directory entries and 12 nested levels. Directories
-are visited in configuration order, with entries sorted by name.
+[guide](examples/guides/test-payments.md). Examples are not loaded automatically.
+**Descriptions go to Jev; selected bodies go to Pi's main model.** User input and
+descriptions may themselves contain private information. Keep mandatory rules in
+`AGENTS.md`, which Sieve never filters. Skills and tools come from Pi's loaded
+catalog; no separate copies are needed.
 
-## Configuration
+Add these entries to your target project's `.gitignore` if the references and
+configuration are private; this repository's ignore rules do not protect other projects:
 
-Copy [examples/sieve.json](examples/sieve.json) to `.pi/sieve.json` in your target
-project. Relative directories resolve from that project's working directory.
-Absolute directories are supported only when you configure them explicitly.
-No global memories, other applications, or conversation archives are scanned.
+```gitignore
+.pi/sieve/
+.pi/sieve.json
+```
 
-| Field | Default | Meaning |
+## Configure selection
+
+Defaults work without a configuration file. To override them, copy
+[examples/sieve.json](examples/sieve.json) to `.pi/sieve.json` in your target
+project, or create a file containing only the fields you want to change.
+Changes apply to the next normal task. Relative directories resolve from the
+project working directory; other applications' memories are never scanned.
+
+| Field | Default | Purpose |
 | --- | --- | --- |
 | `enabled` | `true` | Enable automatic selection |
-| `memoryDirs` | `[".pi/sieve/memories"]` | Local Markdown memory directories |
-| `guideDirs` | `[".pi/sieve/guides"]` | Local Markdown command-guide directories |
-| `pinnedSkills` | `[]` | Skill names excluded from pruning |
-| `pinnedTools` | `[]` | Already enabled tool names excluded from pruning |
-| `model` | `jev-1.13.0` | Pinned Jev model identifier |
-| `timeoutMs` | `1500` | Deadline for the cloud request, including response reading |
-| `maxCandidates` | `40` | Maximum candidates evaluated in one request |
+| `memoryDirs` | `[".pi/sieve/memories"]` | Markdown memory directories |
+| `guideDirs` | `[".pi/sieve/guides"]` | Markdown guide directories |
+| `pinnedSkills` | `[]` | Keep these skill names available |
+| `pinnedTools` | `[]` | Keep these already enabled tools available |
+| `model` | `jev-1.13.0` | Jev model identifier |
+| `timeoutMs` | `1500` | Request deadline, including response reading |
+| `maxCandidates` | `40` | Maximum candidates evaluated per request |
 | `maxDocuments` | `6` | Maximum selected memories and guides combined |
-| `contextChars` | `8000` | Budget for rendered reference content, in characters |
-| `includeThreshold` | `0.5` | Minimum relevance probability for unpinned documents |
+| `contextChars` | `8000` | Character budget for injected references |
+| `includeThreshold` | `0.5` | Minimum probability for unpinned documents |
 | `excludeThreshold` | `0.2` | Skills/tools below this probability may be hidden |
 
-Unknown fields or invalid values disable selection for that task rather than
-partially applying an invalid configuration. The configuration accepts no API
-key or custom endpoint. All constants and limits are visible in
-[src/selection.ts](src/selection.ts).
+Unknown fields or invalid values disable selection for that task. Keys and
+custom endpoints are not accepted. Pinning never enables a tool that was already
+disabled; mentioning an exact capability name in your input also keeps it available.
 
-## Selection behavior
+## Use and troubleshoot
 
-1. Capture user input before Pi expands skills and prompt templates. Use up to
-   three verified inputs on the current branch, within 8,000 characters.
-2. Read local metadata and Pi's existing skill/tool catalog. Prefer keyword
-   matches when selecting the bounded shortlist; remaining slots can contain
-   candidates with no lexical overlap for semantic evaluation.
-3. Send one batch to the official TypeSafe endpoint. Each candidate gets a
-   separate Noul question; another question checks whether the task has enough
-   context for selection. The latest user input takes priority.
-4. Inject selected document bodies through Pi's `context` event. An oversized
-   body is replaced by its description and source reference rather than an
-   incomplete command. References that cannot fit are omitted.
-5. Narrow the current skill menu and extension-tool loadout through Pi's
-   structured prompt options. Keep currently enabled built-in tools, pinned
-   capabilities, and exact capability names mentioned in the verified inputs.
-   Pinned documents are prioritized but still obey document and character limits.
+Work normally in a project Pi trusts, then run `/sieve status` to inspect the last
+selection. It reports counts, elapsed time, model version, and a fallback reason.
 
-Sieve keeps unjudged tools and skills available. A failed request never means
-an empty capability set. Missing credentials, HTTP errors, malformed answers,
-insufficient task context, or deadlines preserve the existing skills/tools and
-fall back to bounded local keyword matching for documents. There are no retries.
-Requests and responses also have byte limits.
+| Control | Effect |
+| --- | --- |
+| `/sieve status` | Inspect the last selection; `not_run` means no result yet |
+| `/sieve off` | Stop automatic selection and release hidden tools |
+| `/sieve on` | Enable selection for the next task |
+| `sieve_search` | Main-model tool for local search and recovery of hidden tools |
 
-Within a run, tool results do not trigger more Jev calls. New steering/follow-up
-input releases hidden tools and clears the old reference block. Automatic
-selection resumes with the next normal prompt. Input that arrives while a run
-is streaming is not retained in Sieve's raw-input cache.
+On/off overrides last for the current session. If something seems missing, ask
+the main model to use `sieve_search` with a query such as `payment retries`.
+It makes no Jev request and never executes the commands it finds.
 
-The small raw-input cache lives in memory only. Reloads, session replacement,
-and tree navigation clear it. Historical messages without a verified raw input
-are not reconstructed from expanded transcript text or uploaded to Jev.
+| Status or symptom | What to check |
+| --- | --- |
+| `/sieve` is unknown or TypeSafe is missing from `/login` | Check `pi list`, then reload Pi or enable the extension in `pi config` |
+| Login says the key was saved but no default model is configured | TypeSafe provides selection only; configure your main-model provider and choose it with `/model` |
+| `missing_key` | Run `/login typesafe`, or check that your configured credential can be resolved |
+| `invalid_config` | Compare `.pi/sieve.json` with the example; remove unknown fields |
+| `untrusted_project` | Review the project and use Pi's normal trust flow |
+| `timeout`, `service_error`, `invalid_response` | Local fallback is active; check your key and TypeSafe service availability |
+| `recovery_unavailable` | Your Pi tool allowlist must include `sieve_search` for automatic selection |
+| A reference is skipped | Check its frontmatter and body; symlinks and files over 64 KiB are skipped |
 
-## Controls and recovery
+## How selection works
 
-- `/sieve status` displays counts, timing, model version, and the last fallback reason.
-- `/sieve off` releases Sieve's hidden tools and stops automatic selection.
-- `/sieve on` enables selection for the next task. These toggles are session-local.
-- `sieve_search({ "query": "payment retries" })` lets the main model search local
-  reference material and the current skill/tool catalog without contacting Jev.
-  Matching tools hidden by Sieve are restored; their commands are not executed.
+At the start of each normal task, Sieve uses up to three verified raw user inputs
+on the current branch and keyword-ranks candidate descriptions. One Jev batch
+judges the shortlist. Selected reference bodies are temporarily added to the main
+model's context; skills remain available through Pi's native on-demand loading.
+Tool results do not trigger more Jev calls.
 
-Sieve never hides its recovery tool. If an explicit Pi tool allowlist excludes
-`sieve_search`, automatic selection is skipped rather than changing that allowlist.
-Likewise, pinned names and recovery never enable tools that were disabled before
-selection. Existing permission checks and tool handlers continue to apply.
+Existing built-in tools, pinned capabilities, and unjudged skills/tools stay
+available. Missing credentials, request failures, or insufficient context fall
+back to bounded local document matching and preserve the original capabilities.
+There are no automatic retries. New input releases hidden tools; completion,
+reloads, and session changes clean up Sieve's state.
 
-Once the agent settles, or the extension is disabled/reloaded, Sieve restores
-its remaining tool exclusions. It preserves unrelated additions. If a previously
-visible tool has disappeared, Sieve yields to that external restriction instead
-of restoring its exclusions. Pi does not expose ownership for every loadout
-change; avoid multiple extensions independently controlling the same tools.
+Sieve preserves unrelated tool additions and yields to detected restrictions from
+other extensions. Pi does not expose ownership for every tool-set change, so avoid
+multiple extensions independently controlling the same tools. Sieve does not
+approve shell commands or bypass permissions.
 
-## Development and verification
+## Development and license
 
-```sh
-npm ci --ignore-scripts
-npm run check
-npm run eval
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the file map, tests, evaluation, and
+commit checks, and [PRIVACY.md](PRIVACY.md) for exact data boundaries.
 
-Tests use Node's built-in runner and Pi's actual SDK with its scripted model
-provider. They do not require a model account or send requests to Jev. The Jev
-transport is captured and mocked to test privacy, validation, timeout behavior,
-and recovery. These tests establish integration behavior, not model accuracy.
-
-For a real selector measurement using only the shipped fictional fixture:
-
-```sh
-npm run eval -- --live
-```
-
-This requires `TYPESAFE_API_KEY` and sends the fixture's tasks and descriptions
-to Jev. The report compares complete candidates, keyword selection, and Jev
-selection, with required-item recall, character counts, selection latency,
-fallback status, and reported Jev token usage. Character counts are not tokens.
-The keyword baseline deliberately filters all optional candidates; normal
-failure recovery conservatively keeps Pi's skills and tools.
-
-Task outcome and end-to-end latency are marked `not_run`/`null`: this small
-selection benchmark does not execute a main agent. To establish a product gain,
-run the same coding tasks with the same model and permissions in all three
-conditions, record objective test outcomes and total latency, and account for
-prompt-cache misses and tool recovery. Do not infer a speedup from context size
-alone. Save private results under the ignored `results/` directory.
-
-## Safe contributions
-
-Install [Gitleaks](https://github.com/gitleaks/gitleaks), then enable the hooks:
-
-```sh
-git config --local core.hooksPath .githooks
-```
-
-Configure this repository's Git author name to your public handle and its email
-to your verified GitHub `noreply` address. Do not copy a private global identity.
-The hook checks actual author and committer identities, all staged file contents,
-and secrets before each commit. A second hook checks the commit message. Both
-fail closed when Gitleaks is unavailable.
-
-```sh
-npm run check:privacy
-npm run check:history
-npm run check:package
-npm run check:secrets
-```
-
-Checks reject private runtime files, personal home paths, non-example email
-addresses (other than GitHub no-reply addresses), and locally identifiable
-names. Gitleaks supplies the secret-pattern scan. Results omit matched content.
-CI repeats the checks without using contributors' local identity settings.
-Automated scanners are incomplete; inspect the staged diff before sharing it.
-
-Keep real configurations, memories, logs, environment files, and credentials
-outside tracked content. The npm package uses an explicit file allowlist. Commit
-messages follow `type(scope): subject`, in English. No automatic publishing is
-configured.
-
-## References and license
-
-- [Pi extension API](https://pi.dev/docs/latest/extensions)
-- [Pi package installation](https://pi.dev/docs/latest/packages)
-- [TypeSafe HTTP API](https://docs.typesafe.ai/api)
-- [Jev model versions and limits](https://docs.typesafe.ai/models)
-- [Jev known limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
+References: [Pi extensions](https://pi.dev/docs/latest/extensions),
+[TypeSafe API](https://docs.typesafe.ai/api),
+[Jev models](https://docs.typesafe.ai/models).
 
 Licensed under [Apache-2.0](LICENSE). This is an independent project, not an
 official Pi or TypeSafe product.

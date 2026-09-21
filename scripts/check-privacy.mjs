@@ -74,7 +74,7 @@ export function run(args = process.argv.slice(2)) {
   } else if (args.includes("--package")) {
     const packs = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
     for (const file of packs[0].files) {
-      if (!/^(?:src\/|examples\/|(?:package\.json|README\.md|PRIVACY\.md|LICENSE)$)/.test(file.path)) failures.add("package-allowlist");
+      if (!/^(?:src\/|examples\/|(?:package\.json|README\.md|CONTRIBUTING\.md|PRIVACY\.md|LICENSE)$)/.test(file.path)) failures.add("package-allowlist");
       check(file.path, readFileSync(file.path, "utf8"));
     }
   } else if (args.includes("--staged")) {

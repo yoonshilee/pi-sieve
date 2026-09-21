@@ -189,7 +189,7 @@ export function localSelection(task: string[], candidates: Candidate[], config: 
 }
 
 export async function selectCandidates(
-  task: string[], candidates: Candidate[], config: Config, signal?: AbortSignal,
+  task: string[], candidates: Candidate[], config: Config, key: string | undefined, signal?: AbortSignal,
 ): Promise<Selection> {
   const started = performance.now();
   const fallback = (reason: FallbackReason): Selection => ({
@@ -197,7 +197,6 @@ export async function selectCandidates(
   });
   if (!task.length) return fallback("unverified_input");
   if (task.join("\n").length > TASK_LIMIT) return fallback("input_too_large");
-  const key = process.env.TYPESAFE_API_KEY;
   if (!key) return fallback("missing_key");
   const shortlist = rankCandidates(task.join("\n"), candidates.filter((item) => !item.pinned)).slice(0, config.maxCandidates);
   if (!shortlist.length) return fallback("no_candidates");

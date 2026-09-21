@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -9,7 +9,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   fauxProvider, fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools,
-  InMemoryCredentialStore,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import sieve from "../src/index.ts";
@@ -48,7 +47,8 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
-  const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
+  const authPath = join(agentDir, "auth.json");
+  const modelRuntime = await ModelRuntime.create({ authPath, modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model: faux.getModel(),
     resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(cwd),
     tools: ["read", "sieve_search", "payment_lookup", "weather"], thinkingLevel: "off" });
@@ -76,9 +76,11 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
   const previous = process.env.TYPESAFE_API_KEY;
   process.env.TYPESAFE_API_KEY = "fixture-only";
   const requests: { state: { user_messages: string[] }; questions: Record<string, unknown> }[] = [];
+  const authorizations: (string | null)[] = [];
   const fetchMock = t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const request = JSON.parse(String(options.body));
     requests.push(request);
+    authorizations.push(new Headers(options.headers).get("Authorization"));
     return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
       const entry = question as { instructions: { candidate?: { name: string } } };
       return [id, { type: "noul", noul: entry.instructions.candidate?.name.includes("weather") ? 0.01 : 0.95 }];
@@ -91,8 +93,79 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
     await rm(cwd, { recursive: true, force: true });
     assert.deepEqual(errors, [], "The real Pi extension runner must not report errors");
   });
-  return { cwd, get session() { return runtime.session; }, get api() { return api; }, runtime, faux, requests, settingsManager };
+  return { cwd, authPath, modelRuntime, authorizations, get session() { return runtime.session; }, get api() { return api; }, runtime, faux, requests, settingsManager };
 }
+
+test("native TypeSafe login persists, overrides the environment, survives reload, and logs out", async (t) => {
+  const fixture = await setup(t);
+  const provider = fixture.modelRuntime.getProvider("typesafe");
+  assert(provider?.auth.apiKey?.login, "Pi's native login selector must discover TypeSafe");
+  assert.deepEqual(provider.getModels(), [], "Authentication must not add a main-agent model");
+  const initialModel = fixture.session.model;
+  await fixture.modelRuntime.login("typesafe", "api_key", {
+    prompt: async (prompt) => { assert.equal(prompt.type, "secret"); return "stored-fixture"; },
+    notify: () => {},
+  });
+  const stored = JSON.parse(await readFile(fixture.authPath, "utf8"));
+  assert.deepEqual(stored.typesafe, { type: "api_key", key: "stored-fixture" });
+  if (process.platform !== "win32") assert.equal((await stat(fixture.authPath)).mode & 0o777, 0o600);
+  for (let run = 0; run < 2; run++) {
+    fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+    await fixture.session.prompt("Fix payment retries");
+    assert.equal(fixture.authorizations.at(-1), "Bearer stored-fixture");
+    await fixture.session.reload();
+  }
+  assert.deepEqual(fixture.session.model, initialModel);
+  const history = JSON.stringify(fixture.session.sessionManager.getEntries());
+  assert(!history.includes("stored-fixture"));
+  assert(!JSON.stringify(fixture.requests).includes("stored-fixture"));
+  await fixture.modelRuntime.logout("typesafe");
+  assert(!JSON.parse(await readFile(fixture.authPath, "utf8")).typesafe);
+  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+  await fixture.session.prompt("Fix payment retries");
+  assert.equal(fixture.authorizations.at(-1), "Bearer fixture-only", "Logout leaves environment credentials available");
+  delete process.env.TYPESAFE_API_KEY;
+  const requestCount = fixture.requests.length;
+  fixture.faux.setResponses([(context) => {
+    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
+    return fauxAssistantMessage("Finished.");
+  }]);
+  await fixture.session.prompt("Fix payment retries");
+  assert.equal(fixture.requests.length, requestCount, "Missing credentials must use local fallback");
+});
+
+test("native auth resolves a secret command and cancelled login preserves existing credentials", async (t) => {
+  const fixture = await setup(t);
+  await writeFile(fixture.authPath, JSON.stringify({ typesafe: { type: "api_key", key: "!printf command-fixture" } }));
+  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+  await fixture.session.prompt("Fix payment retries");
+  assert.equal(fixture.authorizations.at(-1), "Bearer command-fixture");
+  await assert.rejects(fixture.modelRuntime.login("typesafe", "api_key", {
+    prompt: async () => { throw new Error("Login cancelled"); }, notify: () => {},
+  }));
+  assert.equal(JSON.parse(await readFile(fixture.authPath, "utf8")).typesafe.key, "!printf command-fixture");
+  assert(!JSON.stringify(fixture.session.sessionManager.getEntries()).includes("command-fixture"));
+});
+
+test("credential-resolution errors use local fallback without exposing the error", async (t) => {
+  const fixture = await setup(t);
+  const notifications: string[] = [];
+  const ui = fixture.session.extensionRunner!.getUIContext();
+  t.mock.method(ui, "notify", (message: string) => { notifications.push(message); });
+  const auth = fixture.modelRuntime.getProvider("typesafe")!.auth.apiKey!;
+  t.mock.method(auth, "resolve", async () => { throw new Error("PRIVATE_CREDENTIAL_ERROR"); });
+  fixture.faux.setResponses([(context) => {
+    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
+    assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
+    return fauxAssistantMessage("Finished.");
+  }]);
+  await fixture.session.prompt("Fix payment retries");
+  await fixture.session.prompt("/sieve status");
+  assert.equal(fixture.requests.length, 0);
+  assert(notifications.some((message) => message.includes("missing_key")));
+  assert(!JSON.stringify(notifications).includes("PRIVATE_CREDENTIAL_ERROR"));
+  assert(!JSON.stringify(fixture.session.sessionManager.getEntries()).includes("PRIVATE_CREDENTIAL_ERROR"));
+});
 
 test("real Pi filters and restores tools, injects ephemeral references, and preserves project rules", async (t) => {
   const { session, api, faux, requests } = await setup(t);

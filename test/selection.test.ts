@@ -16,9 +16,6 @@ const candidates: Candidate[] = [
 ];
 
 test("selection and outbound privacy", async (t) => {
-  const previous = process.env.TYPESAFE_API_KEY;
-  process.env.TYPESAFE_API_KEY = "fixture-only";
-  t.after(() => { if (previous === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = previous; });
   const requests: string[] = [];
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const body = String(options.body);
@@ -30,7 +27,7 @@ test("selection and outbound privacy", async (t) => {
     }));
     return Response.json({ model: DEFAULTS.model, answers, usage: { input_tokens: 100 } });
   });
-  const result = await selectCandidates(["Fix payment retries"], candidates, { ...DEFAULTS });
+  const result = await selectCandidates(["Fix payment retries"], candidates, { ...DEFAULTS }, "fixture-only");
   assert.equal(result.fallback, "none");
   assert.deepEqual([...result.excluded], ["tool:weather"]);
   assert.equal(result.documents[0].name, "payments");
@@ -40,20 +37,16 @@ test("selection and outbound privacy", async (t) => {
   assert(!requests[0].includes("/fictional/"));
   assert(!requests[0].includes("fixture-only"));
   assert(!requests[0].includes('"name":"report"'));
-  const limited = await selectCandidates(["payment"], candidates, { ...DEFAULTS, maxCandidates: 1 });
+  const limited = await selectCandidates(["payment"], candidates, { ...DEFAULTS, maxCandidates: 1 }, "fixture-only");
   assert.equal(limited.excluded.size, 0, "Unjudged tools must stay available");
   assert(isMentioned("Please use /skill:report", "report"));
   assert(!isMentioned("reporting", "report"));
 });
 
 test("missing credentials, invalid answers, service errors, timeouts, and cancellation preserve tools", async (t) => {
-  const previous = process.env.TYPESAFE_API_KEY;
-  t.after(() => { if (previous === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = previous; });
-  delete process.env.TYPESAFE_API_KEY;
-  const missing = await selectCandidates(["payment"], candidates, { ...DEFAULTS });
+  const missing = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, undefined);
   assert.equal(missing.fallback, "missing_key");
   assert.equal(missing.documents.length, 1);
-  process.env.TYPESAFE_API_KEY = "fixture-only";
   for (const response of [
     Response.json({ model: DEFAULTS.model, answers: {} }),
     new Response("PRIVATE_ERROR_BODY", { status: 429 }),
@@ -61,7 +54,7 @@ test("missing credentials, invalid answers, service errors, timeouts, and cancel
     new Response("x".repeat(70_000)),
   ]) {
     const mock = t.mock.method(globalThis, "fetch", async () => response);
-    const selection = await selectCandidates(["payment"], candidates, { ...DEFAULTS });
+    const selection = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, "fixture-only");
     assert(selection.fallback !== "none");
     assert.equal(selection.excluded.size, 0);
     assert(!JSON.stringify(selection).includes("PRIVATE_ERROR_BODY"));
@@ -73,13 +66,13 @@ test("missing credentials, invalid answers, service errors, timeouts, and cancel
   }));
   const keepAlive = setTimeout(() => {}, 1000);
   try {
-    const timed = await selectCandidates(["payment"], candidates, { ...DEFAULTS, timeoutMs: 10 });
+    const timed = await selectCandidates(["payment"], candidates, { ...DEFAULTS, timeoutMs: 10 }, "fixture-only");
     assert.equal(timed.fallback, "timeout");
     assert.equal(timed.excluded.size, 0);
-    const cancelled = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, AbortSignal.abort());
+    const cancelled = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, "fixture-only", AbortSignal.abort());
     assert.equal(cancelled.fallback, "cancelled");
   } finally { clearTimeout(keepAlive); mock.mock.restore(); }
-  const input = await selectCandidates(["x".repeat(8001)], candidates, { ...DEFAULTS });
+  const input = await selectCandidates(["x".repeat(8001)], candidates, { ...DEFAULTS }, "fixture-only");
   assert.equal(input.fallback, "input_too_large");
 });
 

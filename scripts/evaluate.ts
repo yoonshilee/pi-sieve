@@ -13,7 +13,7 @@ for (const sample of fixture.cases) {
   const started = performance.now();
   const keyword = rankCandidates(sample.task, fixture.candidates).filter((item) => keywordScore(sample.task, item) > 0);
   const keywordMs = performance.now() - started;
-  const selection = live ? await selectCandidates([sample.task], fixture.candidates, { ...DEFAULTS }) : undefined;
+  const selection = live ? await selectCandidates([sample.task], fixture.candidates, { ...DEFAULTS }, process.env.TYPESAFE_API_KEY) : undefined;
   const choices = [
     { mode: "all", items: fixture.candidates, elapsedMs: 0 },
     { mode: "keyword", items: keyword, elapsedMs: keywordMs },

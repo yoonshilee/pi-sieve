@@ -3,7 +3,7 @@
 ## What Jev receives
 
 When automatic selection is enabled, the project is trusted, and
-`TYPESAFE_API_KEY` is present, Sieve sends an HTTPS POST to
+Pi can resolve a TypeSafe credential, Sieve sends an HTTPS POST to
 `https://api.typesafe.ai/v1/systemone` containing:
 
 - Up to three verified raw user inputs from the current branch, within the task budget.
@@ -38,6 +38,26 @@ Sieve does not overwrite project instructions, bypass permission checks, or
 execute command guides. Jev's decisions are relevance judgments, not security
 authorizations or proof that a reference is correct.
 
+## Credentials
+
+Sieve registers `typesafe` with Pi's native authentication system. `/login typesafe`
+saves a key to Pi's user-level `auth.json`, normally `~/.pi/agent/auth.json`;
+custom Pi agent directories use their own file. Pi creates it with `0600`
+permissions on Unix. Literal keys remain plain text, and Pi 0.86.1's native login
+dialog can display entered text. The command does not send the key to a model or
+validate it with TypeSafe. Avoid recording the dialog or entering keys in chat.
+
+The saved credential takes precedence over `TYPESAFE_API_KEY`. Pi also resolves
+environment references and `!command` secret-manager entries. Commands execute
+locally under Pi's rules, with output cached for the process lifetime. Sieve does
+not implement its own credential storage or load `.env` files. Resolved keys go
+only to the fixed TypeSafe endpoint's Authorization header.
+
+Use `/logout` and select TypeSafe to remove the saved credential. Environment
+keys remain available after logout; `/sieve off` stops automatic selection
+regardless of credential source. Protect the user-level Pi directory separately
+from this repository. Removing the plugin does not delete credentials saved by Pi.
+
 ## Local state and logs
 
 Raw input mappings, selection state, and document content stay in memory. Sieve
@@ -56,8 +76,8 @@ This repository ignores `.pi/`, environment files, logs, evaluation outputs,
 dependencies, and package archives. Only fictional examples are tracked.
 Other projects need their own ignore rules for private `.pi/sieve` content.
 
-The npm file allowlist includes source, fictional examples, README, this file,
-and the license. Local hooks check staged contents and effective commit identity;
+The npm file allowlist includes source, fictional examples, README, CONTRIBUTING,
+this file, and the license. Local hooks check staged contents and effective commit identity;
 CI checks tracked content, history, and the package inventory. Gitleaks scans for
 secrets. Personal names and email addresses are not required in project files.
 
