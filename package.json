@@ -1,7 +1,7 @@
 {
   "name": "pi-sieve",
-  "version": "0.2.0",
-  "description": "On-demand retrieval with Jev relevance selection for Pi agents.",
+  "version": "0.3.0",
+  "description": "Caller-defined candidate scoring and on-demand retrieval with Jev for Pi agents.",
   "type": "module",
   "license": "Apache-2.0",
   "keywords": ["pi-package", "pi-extension", "jev", "context"],

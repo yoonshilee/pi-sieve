@@ -14,7 +14,7 @@ import { Type } from "typebox";
 import sieve from "../src/index.ts";
 import type { JevRequest } from "../src/selection.ts";
 
-async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false) {
+async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false, scoring = false) {
   const cwd = await mkdtemp(join(tmpdir(), "sieve-sdk-"));
   const agentDir = join(cwd, "agent");
   await mkdir(join(cwd, ".pi/sieve/memories"), { recursive: true });
@@ -52,7 +52,7 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
   const modelRuntime = await ModelRuntime.create({ authPath, modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model: faux.getModel(),
     resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(cwd),
-    tools: ["read", "sieve_search", "payment_lookup", "weather"], thinkingLevel: "off" });
+    tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : [])], thinkingLevel: "off" });
   const errors: string[] = [];
   session.subscribe((event) => {
     if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
@@ -65,7 +65,7 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
     await resourceLoader.reload();
     const result = await createAgentSession({ cwd, agentDir, modelRuntime, resourceLoader, settingsManager,
       sessionManager, sessionStartEvent, model: faux.getModel(), thinkingLevel: "off",
-      tools: ["read", "sieve_search", "payment_lookup", "weather"] });
+      tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : [])] });
     await result.session.bindExtensions({ onError: (error) => errors.push(error.error) });
     result.session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
@@ -357,4 +357,42 @@ test("streaming input cancels pending retrieval without uploading the new instru
   await fixture.session.prompt("Find references for the current task");
   assert.equal(fixture.requests.length, 1);
   assert(!JSON.stringify(fixture.requests).includes("PRIVATE_NEW_INSTRUCTION"));
+});
+
+test("caller-defined scoring returns to the main model without executing options or changing prefixes", async t => {
+  const fixture = await setup(t, true, false, true);
+  const input = { context: "A concurrent retry created a duplicate charge", question: "How useful is this action?",
+    criteria: ["No evidence", "Relevant evidence"], options: [{ id: "read_handler", content: "Read the payment handler" }, { id: "test", content: "Run the concurrent retry test" }] };
+  const requests: unknown[] = [];
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    requests.push(JSON.parse(String(init.body)));
+    return Response.json({ model: "jev-1.13.0", answers: { q0: { type: "score", score: 0.8, confidence: 0.3, probabilities: { "0": 0.2, "1": 0.8 } }, q1: { type: "score", score: 0.9, confidence: 0.5, probabilities: { "0": 0.1, "1": 0.9 } } } });
+  });
+  let previous: unknown[] = [];
+  let definitions: unknown;
+  for (const toggle of ["on", "off", "on"]) {
+    await fixture.session.prompt(`/sieve ${toggle}`);
+    fixture.faux.setResponses([
+      context => {
+        definitions ??= structuredClone(getCurrentTools(context.messages));
+        assert.deepEqual(getCurrentTools(context.messages), definitions);
+        previous = structuredClone(context.messages);
+        return fauxAssistantMessage(fauxToolCall("sieve_score", input), { stopReason: "toolUse" });
+      },
+      context => {
+        assert.deepEqual(context.messages.slice(0, previous.length), previous);
+        assert(JSON.stringify(context.messages).includes(toggle === "on" ? '"available":true' : '"available":false'));
+        return fauxAssistantMessage("The main model retains the next action.");
+      },
+    ]);
+    await fixture.session.prompt("Compare possible next actions without executing them.");
+  }
+  assert.equal(requests.length, 2);
+  for (const marker of ["PRIVATE_MEMORY_BODY", "PRIVATE_SKILL_BODY", "PRIVATE_TOOL_RESULT", "KEEP_PROJECT_RULE", "fixture-only"])
+    assert(!JSON.stringify(requests).includes(marker));
+  assert(!fixture.api.getActiveTools().includes("disabled_tool"));
+  await fixture.runtime.newSession();
+  fixture.faux.setResponses([fauxAssistantMessage("New session.")]);
+  await fixture.session.prompt("Continue without scoring.");
+  assert.equal(requests.length, 2);
 });

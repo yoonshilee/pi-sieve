@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { evaluateJev, isRecord } from "./jev.ts";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export const SEARCH_TOOL = "sieve_search";
@@ -8,9 +9,6 @@ export const CONFIG_PATH = ".pi/sieve.json";
 export const QUERY_LIMIT = 8_000;
 const FILE_LIMIT = 65_536;
 const CATALOG_LIMIT = 1_000;
-const REQUEST_LIMIT = 64_000;
-const RESPONSE_LIMIT = 65_536;
-const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const MODEL_PATTERN = /^jev-[a-zA-Z0-9.-]{1,80}$/;
 const STOP_WORDS = new Set(["a", "an", "and", "for", "in", "is", "it", "of", "on", "the", "to", "with"]);
 
@@ -69,10 +67,6 @@ export interface JevRequest {
     instructions: { question: string; candidate: Pick<Candidate, "kind" | "name" | "description"> };
     criteria: { true: string; false: string };
   }>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function parseConfig(value: unknown): Config {
@@ -231,51 +225,22 @@ export async function selectCandidates(
     };
   });
   const request: JevRequest = { model: config.model, state: { query }, questions };
-  const body = JSON.stringify(request);
-  if (Buffer.byteLength(body) > REQUEST_LIMIT) return fallback("request_too_large");
-  const timeout = AbortSignal.timeout(config.timeoutMs);
-  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  try {
-    const response = await fetch(ENDPOINT, {
-      method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body, signal: combined, redirect: "error",
-    });
-    if (!response.ok) { await response.body?.cancel(); return fallback("service_error"); }
-    const reader = response.body?.getReader();
-    if (!reader) return fallback("invalid_response");
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    while (true) {
-      combined.throwIfAborted();
-      const { value, done } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > RESPONSE_LIMIT) { await reader.cancel(); return fallback("invalid_response"); }
-      chunks.push(value);
-    }
-    combined.throwIfAborted();
-    const result: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!isRecord(result) || !isRecord(result.answers) || typeof result.model !== "string" || !MODEL_PATTERN.test(result.model)) {
-      return fallback("invalid_response");
-    }
-    const scored: { candidate: Candidate; probability: number }[] = [];
-    for (const [index, candidate] of shortlist.entries()) {
-      const answer = result.answers[`q${index}`];
-      if (!isRecord(answer) || answer.type !== "noul" || typeof answer.noul !== "number" ||
-          !Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1) return fallback("invalid_response");
-      scored.push({ candidate, probability: answer.noul });
-    }
-    const documents = [...pinned, ...scored.filter((item) => item.probability >= config.includeThreshold)
-      .sort((a, b) => b.probability - a.probability).map((item) => item.candidate)].slice(0, config.maxDocuments);
-    const usage = isRecord(result.usage) ? result.usage : {};
-    const tokenCount = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-    return {
-      documents, fallback: "none", evaluated: shortlist.length, elapsedMs: Math.round(performance.now() - started),
-      model: result.model, inputTokens: tokenCount(usage.input_tokens), outputTokens: tokenCount(usage.output_tokens),
-    };
-  } catch (error) {
-    return fallback(signal?.aborted ? "cancelled" : timeout.aborted ? "timeout" : error instanceof SyntaxError ? "invalid_response" : "service_error");
+  const result = await evaluateJev(request, key, config.timeoutMs, signal);
+  if (!result.ok) return fallback(result.reason);
+  const scored: { candidate: Candidate; probability: number }[] = [];
+  for (const [index, candidate] of shortlist.entries()) {
+    const answer = result.answers[`q${index}`];
+    if (!isRecord(answer) || answer.type !== "noul" || typeof answer.noul !== "number" ||
+        !Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1) return fallback("invalid_response");
+    scored.push({ candidate, probability: answer.noul });
   }
+  const documents = [...pinned, ...scored.filter((item) => item.probability >= config.includeThreshold)
+    .sort((a, b) => b.probability - a.probability).map((item) => item.candidate)].slice(0, config.maxDocuments);
+  return {
+    documents, fallback: "none", evaluated: shortlist.length, elapsedMs: Math.round(performance.now() - started),
+    model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+  };
+
 }
 
 export function renderDocuments(documents: Candidate[], budget: number): string {

@@ -23,5 +23,6 @@ test("the packed package loads through Pi's extension loader", async (t) => {
   assert.deepEqual(loaded.errors, []);
   assert.equal(loaded.extensions.length, 1);
   assert(loaded.extensions[0].tools.has("sieve_search"));
+  assert(loaded.extensions[0].tools.has("sieve_score"));
   assert(loaded.extensions[0].commands.has("sieve"));
 });

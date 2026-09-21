@@ -1,9 +1,10 @@
 # Pi Sieve
 
-On-demand retrieval with Jev relevance selection for Pi agents. The main model
-calls `sieve_search` when it needs project memories or command guides. Sieve
-selects references inside that tool call and returns them as a normal tool result.
-It does not rebuild conversation context, filter skills, or hide tools.
+Delegate candidate evaluation to Jev while the main model defines options,
+rubrics, and the next action. `sieve_score` returns structured judgments without
+executing commands. `sieve_search` remains available for project references.
+Both tools use normal tool messages and leave existing context and capabilities
+unchanged.
 
 **Compatibility:** Pi **0.86.1**, Node **22.19+**. The supported Pi package range
 is `>=0.86.1 <0.87.0`. Thresholds are experimental; real-world speed and accuracy
@@ -157,7 +158,50 @@ configuration are private; this repository's ignore rules do not protect other p
 .pi/sieve.json
 ```
 
-## Use
+## Score candidate actions
+
+Ask the main model to propose grounded options and a shared rubric, then use
+`sieve_score` before choosing the next action. It should not finish the same
+comparison itself before delegating it. Example tool arguments:
+
+```json
+{
+  "context": {
+    "goal": "Locate duplicate payment charges",
+    "observation": "Concurrent retries create duplicate charges"
+  },
+  "question": "How much useful evidence will this action provide?",
+  "criteria": [
+    "No relevant evidence",
+    "Indirect evidence about a plausible cause",
+    "Direct evidence distinguishing the leading causes"
+  ],
+  "options": [
+    { "id": "inspect", "content": "Inspect the payment idempotency handler" },
+    { "id": "test", "content": "Run the existing concurrent retry test" }
+  ]
+}
+```
+
+One request evaluates all options against the same rubric. Results preserve IDs
+and include `score`, `confidence`, and the probability for each level. The scale
+is zero to `criteria.length - 1`; it is not a success percentage. Confidence is a
+property of the predicted distribution, not a correctness guarantee. The main
+model interprets the results and decides whether to execute, revise, or reject
+all options. No score overrides project rules or permissions.
+
+Supply one evaluation dimension, 2-10 descriptive levels, and 1-40 uniquely named
+options. Context may be text or a flat object of text fields. Requests are capped
+at 64,000 bytes, so maximum field lengths cannot all be used together. The
+configured `model`, `timeoutMs`, and `enabled` apply; retrieval thresholds and
+budgets do not alter scores. Scoring is strictly on demand.
+
+Missing credentials, disabled mode, invalid input, timeout, or invalid responses
+return `available: false`, a reason code, and no scores. The main model must then
+reason directly or gather more evidence. Scoring never falls back to invented
+keyword scores and never automatically retries.
+
+## Retrieve references
 
 Start with `/sieve on`, then ask Pi:
 
@@ -174,9 +218,10 @@ installing Sieve does not guarantee that every task uses it.
 
 | Control | Effect |
 | --- | --- |
-| `/sieve status` | Show the latest search counts, duration, model, reported token usage, and reason |
-| `/sieve on` | Use Jev within subsequent searches |
-| `/sieve off` | Use the same search tool with local keyword selection only |
+| `/sieve status` | Show the latest operation, counts, duration, model, reported token usage, and reason |
+| `/sieve on` | Enable Jev scoring and retrieval |
+| `/sieve off` | Disable scoring; use local keyword retrieval |
+| `sieve_score({ context, question, criteria, options })` | Score caller-defined candidates; return decisions to the main model |
 | `sieve_search({ query })` | Retrieve memories and command guides on demand |
 
 On/off overrides last for the current session. Both modes keep exactly the same
@@ -225,7 +270,7 @@ setting, not a new production default or a speed claim.
 
 ## Context, cache, and limitations
 
-Sieve registers a fixed tool and appends ordinary tool results. It does not insert
+Sieve registers fixed tools and appends ordinary tool results. It does not insert
 transient context blocks, rewrite prior messages, or change available skills and
 tools between searches. This avoids Sieve-induced changes to existing request
 prefixes. Results still add tokens and may be saved in Pi sessions. Provider cache
@@ -247,19 +292,13 @@ injection, capability filtering, and hidden-tool recovery. Existing `pinnedSkill
 when updating your configuration. Skills and tools follow Pi's normal settings.
 Previously saved tool results remain ordinary session history.
 
-## Preliminary benchmark
+## Evaluation status
 
-**Historical v0.1 context-filtering results; not measurements of v0.2 retrieval.**
-
-Payments pilot on 2026-09-21: one five-stage workflow per arm, using Astra or Luna
-with medium reasoning. All 10 Jev selections succeeded with a **10-second benchmark
-timeout** (the plugin default is 1.5 seconds). These small-sample observations do
-not establish general speed or accuracy gains; token counts are not monetary costs.
-
-![Pilot comparison of workflow time, independent check pass rates, and main-model token usage](https://raw.githubusercontent.com/yoonshilee/pi-sieve-bench/e27fbb87e6af501c7de1a5a28885ad1e4ec9f759/reports/pilot-20260921-jev10s/benchmark.png)
-
-See [Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench#results) for the
-complete experimental setup, detailed results, failure analysis, and downloadable data.
+Candidate scoring has no established speed, cost, or accuracy improvement.
+Earlier retrieval and automatic-context experiments are historical diagnostics,
+not evidence for this mechanism or future release performance claims. New
+experiments use Sol medium. Benchmark implementation lives in
+[Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench).
 
 ## Development and license
 
