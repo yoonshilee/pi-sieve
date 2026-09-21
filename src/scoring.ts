@@ -5,7 +5,8 @@ import type { Config, FallbackReason } from "./selection.ts";
 
 export const SCORE_TOOL = "sieve_score";
 const ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$";
-const PROBABILITY_TOLERANCE = 0.01;
+const ROUNDING_ERROR = 0.005;
+const FLOAT_EPSILON = 1e-9;
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
 export const ScoreParameters = Type.Object({
   context: Type.Union([text(8_000), Type.Record(text(80), text(4_000), { maxProperties: 32 })]),
@@ -69,7 +70,10 @@ export async function scoreOptions(input: unknown, config: Config, key?: string,
     }
     const sum = probabilities.reduce((total, p) => total + p, 0);
     const expected = probabilities.reduce((total, p, level) => total + p * level, 0);
-    if (Math.abs(sum - 1) > PROBABILITY_TOLERANCE || Math.abs(expected - answer.score) > PROBABILITY_TOLERANCE) return failure("invalid_response");
+    // The API rounds each probability and the score independently to two decimals.
+    const sumTolerance = probabilities.length * ROUNDING_ERROR + FLOAT_EPSILON;
+    const scoreTolerance = (1 + maxScore * (maxScore + 1) / 2) * ROUNDING_ERROR + FLOAT_EPSILON;
+    if (Math.abs(sum - 1) > sumTolerance || Math.abs(expected - answer.score) > scoreTolerance) return failure("invalid_response");
     results.push({ id: option.id, score: answer.score, confidence: answer.confidence, probabilities });
   }
   return { available: true, reason: "none", results, maxScore, evaluated: results.length,

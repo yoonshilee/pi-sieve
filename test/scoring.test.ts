@@ -64,3 +64,15 @@ test("scoring deadline and cancellation return unavailable without stale scores"
     assert.equal((await scoreOptions(input, { ...DEFAULTS }, "fixture-only", AbortSignal.abort())).reason, "cancelled");
   } finally { clearTimeout(keepAlive); }
 });
+
+
+test("independently rounded service scores and probabilities remain valid", async t => {
+  const answers = {
+    q0: { type: "score", score: 1.41, confidence: 0.5, probabilities: { "0": 0.05, "1": 0.53, "2": 0.39, "3": 0.03 } },
+    q1: { type: "score", score: 0.73, confidence: 0.63, probabilities: { "0": 0.32, "1": 0.63, "2": 0.04, "3": 0.01 } },
+  };
+  t.mock.method(globalThis, "fetch", async () => Response.json({ model: DEFAULTS.model, answers }));
+  const result = await scoreOptions({ ...input, criteria: [...input.criteria, "Decisive evidence"] }, { ...DEFAULTS }, "fixture-only");
+  assert(result.available);
+  assert.deepEqual(result.results.map(item => item.score), [1.41, 0.73]);
+});
