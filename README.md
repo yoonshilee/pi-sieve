@@ -10,36 +10,50 @@ gains have not been established.
 
 ## Install
 
-Pi Sieve is currently distributed as a local source directory. No public GitHub
-repository or npm release is available yet. Obtain a copy of this directory,
-open a terminal in it, and run:
+Install from the [GitHub repository](https://github.com/yoonshilee/pi-sieve):
 
 ```sh
-npm ci --ignore-scripts
-pi install .
+pi install git:github.com/yoonshilee/pi-sieve
 pi list
 ```
 
-This registers the plugin for your user account. Keep the directory in place:
-Pi references local packages without copying them. Start Pi in the project where
-you want to use Sieve, or run `/reload` in an existing session.
+This installs the plugin for your user account. Start Pi in the project where
+you want to use Sieve, or run `/reload` in an existing session, then configure
+your key with `/login typesafe`. No npm release is currently available.
 
-For other installation scopes, replace `./path/to/pi-sieve` with the plugin's
-directory and run from your target project:
+For a project-only installation, run this from the target project instead:
 
 ```sh
-# Install for this project only.
-pi install -l ./path/to/pi-sieve
-
-# Or try it for one session without saving an installation.
-pi -e ./path/to/pi-sieve/src/index.ts
+pi install -l git:github.com/yoonshilee/pi-sieve
 ```
 
-To remove the user-wide installation, run `pi remove .` from the plugin directory.
-For a project installation, run `pi remove -l ./path/to/pi-sieve` from that project.
-Reload or restart Pi afterward. To update a local installation, update its source
-directory, run `npm ci --ignore-scripts` there, then reload Pi.
+Update or remove the installation with:
+
+```sh
+pi update git:github.com/yoonshilee/pi-sieve
+pi remove git:github.com/yoonshilee/pi-sieve
+```
+
+For project-only removal, add `-l` and run from that project. Reload or restart
+Pi after changing the installation.
 See [Pi package management](https://pi.dev/docs/latest/packages) for details.
+
+### Local development
+
+Clone the repository and install its development dependencies:
+
+```sh
+git clone https://github.com/yoonshilee/pi-sieve.git
+cd pi-sieve
+npm ci --ignore-scripts
+pi -e ./src/index.ts
+```
+
+The last command loads Sieve for one session. For persistent local use, run
+`pi install .` instead, then start or reload Pi. Keep the checkout in place:
+Pi references local packages without copying them. After updating the checkout,
+run `npm ci --ignore-scripts` there and reload Pi. Run `pi remove .` from the
+checkout to remove that local installation.
 
 ## Configure your TypeSafe key
 
