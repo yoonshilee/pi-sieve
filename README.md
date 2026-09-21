@@ -229,6 +229,18 @@ other extensions. Pi does not expose ownership for every tool-set change, so avo
 multiple extensions independently controlling the same tools. Sieve does not
 approve shell commands or bypass permissions.
 
+## Preliminary benchmark
+
+Payments pilot on 2026-09-21: one five-stage workflow per arm, using Astra or Luna
+with medium reasoning. All 10 Jev selections succeeded with a **10-second benchmark
+timeout** (the plugin default is 1.5 seconds). These small-sample observations do
+not establish general speed or accuracy gains; token counts are not monetary costs.
+
+![Pilot comparison of workflow time, independent check pass rates, and main-model token usage](https://raw.githubusercontent.com/yoonshilee/pi-sieve-bench/1cfe86bbe1a4970683107688727661af6b02e5f8/reports/pilot-20260921-jev10s/benchmark.png)
+
+See [Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench#results) for the
+complete experimental setup, detailed results, failure analysis, and downloadable data.
+
 ## Development and license
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the file map, tests, evaluation, and
