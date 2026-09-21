@@ -20,6 +20,7 @@ export interface OptionScore {
 }
 export interface ScoringResult {
   available: boolean;
+  selected: ScoreInput["options"][number] | null;
   reason: FallbackReason | "invalid_input";
   results: OptionScore[];
   maxScore: number | null;
@@ -33,7 +34,7 @@ export interface ScoringResult {
 export async function scoreOptions(input: unknown, config: Config, key?: string, signal?: AbortSignal): Promise<ScoringResult> {
   const started = performance.now();
   const failure = (reason: ScoringResult["reason"]): ScoringResult => ({
-    available: false, reason, results: [], maxScore: null, evaluated: 0,
+    available: false, selected: null, reason, results: [], maxScore: null, evaluated: 0,
     elapsedMs: Math.round(performance.now() - started), model: null, inputTokens: null, outputTokens: null,
   });
   if (signal?.aborted) return failure("cancelled");
@@ -76,7 +77,9 @@ export async function scoreOptions(input: unknown, config: Config, key?: string,
     if (Math.abs(sum - 1) > sumTolerance || Math.abs(expected - answer.score) > scoreTolerance) return failure("invalid_response");
     results.push({ id: option.id, score: answer.score, confidence: answer.confidence, probabilities });
   }
-  return { available: true, reason: "none", results, maxScore, evaluated: results.length,
+  // Strict comparison preserves input order when the service returns tied scores.
+  const winner = results.reduce((best, result, index) => result.score > results[best].score ? index : best, 0);
+  return { available: true, selected: { ...input.options[winner] }, reason: "none", results, maxScore, evaluated: results.length,
     elapsedMs: Math.round(performance.now() - started), model: response.model,
     inputTokens: response.inputTokens, outputTokens: response.outputTokens };
 }

@@ -1,8 +1,8 @@
 # Pi Sieve
 
-Delegate candidate evaluation to Jev while the main model defines options,
-rubrics, and the next action. `sieve_score` returns structured judgments without
-executing commands. `sieve_search` remains available for project references.
+Delegate a choice to Jev: the main model supplies facts, options, and a shared
+rubric; Sieve selects the highest-scoring option, and the main model executes it
+without reranking. `sieve_score` itself does not execute commands. `sieve_search` remains available for project references.
 Both tools use normal tool messages and leave existing context and capabilities
 unchanged.
 
@@ -161,7 +161,7 @@ configuration are private; this repository's ignore rules do not protect other p
 ## Score candidate actions
 
 Ask the main model to propose grounded options and a shared rubric, then use
-`sieve_score` before choosing the next action. It should not finish the same
+`sieve_score` to delegate the next choice. It should not finish the same
 comparison itself before delegating it. Example tool arguments:
 
 ```json
@@ -183,12 +183,27 @@ comparison itself before delegating it. Example tool arguments:
 }
 ```
 
-One request evaluates all options against the same rubric. Results preserve IDs
-and include `score`, `confidence`, and the probability for each level. The scale
-is zero to `criteria.length - 1`; it is not a success percentage. Confidence is a
-property of the predicted distribution, not a correctness guarantee. The main
-model interprets the results and decides whether to execute, revise, or reject
-all options. No score overrides project rules or permissions.
+One request evaluates all options against the same rubric. Sieve selects the highest
+score, breaking ties by input order, and returns only the selected ID and original
+content to the main model:
+
+```json
+{"available":true,"reason":"none","selected":{"id":"test","content":"Run the existing concurrent retry test"}}
+```
+
+The model follows this selection using Pi's existing tools, without comparing the
+options again. Supply an exact command as option content when exact execution is
+required. Only propose eligible actions; normal project rules, tool validation,
+and permissions still apply. This is a tool-use contract, not a runtime interceptor:
+Sieve cannot force a noncompliant model to obey or grant permission to execute.
+
+Per-option scores, probabilities, confidence, and usage remain in Pi tool details
+for diagnostics; they are not included in the model-visible result text. Scores
+range from zero to `criteria.length - 1`, not success percentages. Confidence
+is distribution concentration, not a correctness guarantee. A neutral rubric
+should describe useful outcomes without encoding a particular candidate as the
+answer. There is no minimum acceptance score: include a suitable evidence-gathering
+option if no immediate action is justified.
 
 Supply one evaluation dimension, 2-10 descriptive levels, and 1-40 uniquely named
 options. Context may be text or a flat object of text fields. Requests are capped
@@ -197,8 +212,8 @@ configured `model`, `timeoutMs`, and `enabled` apply; retrieval thresholds and
 budgets do not alter scores. Scoring is strictly on demand.
 
 Missing credentials, disabled mode, invalid input, timeout, or invalid responses
-return `available: false`, a reason code, and no scores. The main model must then
-reason directly or gather more evidence. Scoring never falls back to invented
+return `available: false`, a reason code, and `selected: null`. No decision was
+made; report the reason and gather missing evidence or user input. Scoring never falls back to invented
 keyword scores and never automatically retries.
 
 ## Retrieve references
@@ -221,7 +236,7 @@ installing Sieve does not guarantee that every task uses it.
 | `/sieve status` | Show the latest operation, counts, duration, model, reported token usage, and reason |
 | `/sieve on` | Enable Jev scoring and retrieval |
 | `/sieve off` | Disable scoring; use local keyword retrieval |
-| `sieve_score({ context, question, criteria, options })` | Score caller-defined candidates; return decisions to the main model |
+| `sieve_score({ context, question, criteria, options })` | Select one caller-defined candidate for the main model to execute |
 | `sieve_search({ query })` | Retrieve memories and command guides on demand |
 
 On/off overrides last for the current session. Both modes keep exactly the same
@@ -291,6 +306,13 @@ injection, capability filtering, and hidden-tool recovery. Existing `pinnedSkill
 `pinnedTools`, and `excludeThreshold` fields are accepted but ignored; remove them
 when updating your configuration. Skills and tools follow Pi's normal settings.
 Previously saved tool results remain ordinary session history.
+
+### Migrating from v0.3
+
+The `sieve_score` input signature is unchanged. Its model-visible output now contains
+`selected` instead of a score table. The model follows that selection; it no longer
+uses scores as advice for its own final choice. No command execution is added to
+the plugin. Unavailable responses have `selected: null`.
 
 ## Evaluation status
 

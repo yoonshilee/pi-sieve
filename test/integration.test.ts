@@ -359,7 +359,7 @@ test("streaming input cancels pending retrieval without uploading the new instru
   assert(!JSON.stringify(fixture.requests).includes("PRIVATE_NEW_INSTRUCTION"));
 });
 
-test("caller-defined scoring returns to the main model without executing options or changing prefixes", async t => {
+test("delegated choice returns only the selected option without executing it or changing prefixes", async t => {
   const fixture = await setup(t, true, false, true);
   const input = { context: "A concurrent retry created a duplicate charge", question: "How useful is this action?",
     criteria: ["No evidence", "Relevant evidence"], options: [{ id: "read_handler", content: "Read the payment handler" }, { id: "test", content: "Run the concurrent retry test" }] };
@@ -382,7 +382,12 @@ test("caller-defined scoring returns to the main model without executing options
       context => {
         assert.deepEqual(context.messages.slice(0, previous.length), previous);
         assert(JSON.stringify(context.messages).includes(toggle === "on" ? '"available":true' : '"available":false'));
-        return fauxAssistantMessage("The main model retains the next action.");
+        const appended = context.messages.slice(previous.length).filter(message => message.role === "toolResult")
+          .flatMap(message => message.content).filter(part => part.type === "text").map(part => part.text).join("\n");
+        assert(!appended.includes('"probabilities"'));
+        assert(!appended.includes('"confidence"'));
+        assert(appended.includes(toggle === "on" ? '"selected":{"id":"test"' : '"selected":null'));
+        return fauxAssistantMessage("The selected action is ready for execution.");
       },
     ]);
     await fixture.session.prompt("Compare possible next actions without executing them.");

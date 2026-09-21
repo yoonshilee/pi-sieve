@@ -37,6 +37,8 @@ Selected bodies and their source paths are returned to Pi's existing main-model
 provider as a normal tool result. Oversized bodies return a description and source
 pointer. Local retrieval does not mean the main-model provider is local.
 
+Scoring returns the selected option ID and unchanged content to the main model.
+Full scores remain in Pi tool details for diagnostics and session storage.
 Sieve never executes command guides or changes skills, tools, or project rules.
 Relevance judgments are not security authorizations or proof of correctness.
 It does not rewrite earlier messages to keep retrieved material at the prompt tail.

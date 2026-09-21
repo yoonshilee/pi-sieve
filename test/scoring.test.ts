@@ -25,6 +25,7 @@ test("one scoring batch preserves caller rubric, identities, and privacy boundar
   const result = await scoreOptions(input, { ...DEFAULTS }, "fixture-only");
   assert.equal(calls, 1);
   assert(result.available);
+  assert.deepEqual(result.selected, input.options[0]);
   assert.deepEqual(result.results.map(r => r.id), ["inspect", "test"]);
   assert.equal(result.results[0].score, 1.75);
   assert.equal(result.maxScore, 2);
@@ -46,6 +47,7 @@ test("invalid inputs and service answers never fabricate scores or leak errors",
     const result = await scoreOptions(input, { ...DEFAULTS }, "fixture-only");
     assert.equal(result.reason, "invalid_response");
     assert.deepEqual(result.results, []);
+    assert.equal(result.selected, null);
   }
   mock.mock.mockImplementation(async () => new Response("PRIVATE_SERVICE_ERROR", { status: 503 }));
   const result = await scoreOptions(input, { ...DEFAULTS }, "fixture-only");
@@ -75,4 +77,14 @@ test("independently rounded service scores and probabilities remain valid", asyn
   const result = await scoreOptions({ ...input, criteria: [...input.criteria, "Decisive evidence"] }, { ...DEFAULTS }, "fixture-only");
   assert(result.available);
   assert.deepEqual(result.results.map(item => item.score), [1.41, 0.73]);
+});
+
+test("the highest score selects an unchanged option without a command-length shortcut", async t => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({ model: DEFAULTS.model, answers: {
+    q0: { ...answer, score: 1, probabilities: { "0": 0, "1": 1, "2": 0 } }, q1: answer,
+  } }));
+  const options = [input.options[0], { id: "exact", content: "node -e '" + " ".repeat(350) + "console.log(1)'" }];
+  const result = await scoreOptions({ ...input, options }, { ...DEFAULTS }, "fixture-only");
+  assert.deepEqual(result.selected, options[1]);
+  assert.equal((await scoreOptions(input, { ...DEFAULTS }, "fixture-only", AbortSignal.abort())).selected, null);
 });

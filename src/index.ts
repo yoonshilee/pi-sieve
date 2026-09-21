@@ -26,13 +26,13 @@ export default function sieve(pi: ExtensionAPI): void {
   let diagnostics: Diagnostics = { reason: "not_run" };
   const requests = new Set<AbortController>();
 
-  function cancelSearches(): void {
+  function cancelRequests(): void {
     for (const request of requests) request.abort();
     requests.clear();
   }
 
   function resetSession(): void {
-    cancelSearches();
+    cancelRequests();
     enabledOverride = undefined;
     diagnostics = { reason: "not_run" };
   }
@@ -40,14 +40,14 @@ export default function sieve(pi: ExtensionAPI): void {
   pi.on("session_start", resetSession);
   pi.on("session_shutdown", resetSession);
   pi.on("session_tree", resetSession);
-  pi.on("input", cancelSearches);
+  pi.on("input", cancelRequests);
 
   pi.registerCommand("sieve", {
     description: "Inspect Sieve or toggle Jev: status, on, off",
     handler: async (args, ctx) => {
       const action = args.trim() || "status";
       if (action === "off" || action === "on") {
-        cancelSearches();
+        cancelRequests();
         enabledOverride = action === "on";
         diagnostics = { reason: action === "off" ? "disabled" : "not_run" };
         ctx.ui.notify(action === "on" ? "Sieve will use Jev for scoring and search." : "Sieve scoring is disabled; search uses local matching.", "info");
@@ -62,15 +62,17 @@ export default function sieve(pi: ExtensionAPI): void {
 
   pi.registerTool({
     name: SCORE_TOOL, label: "Sieve Score",
-    description: "Delegate evaluation of candidate actions, references, or plans to Jev. Supply the relevant facts, candidate options, one evaluation question, and shared descriptive scoring levels from low to high. Returns per-option scores, probabilities, and confidence; you choose what to do next. Does not execute options or authorize actions.",
-    promptGuidelines: ["Use sieve_score when comparing several plausible options would require substantial evaluation. Propose grounded candidates and a shared rubric without first completing the same evaluation yourself. Include only the necessary facts: every supplied field is sent to TypeSafe. Read the returned scores as judgments, not guaranteed correctness; you retain the final decision. If scoring is unavailable, reason directly. Do not request scores for facts code can determine exactly."],
+    description: "Delegate a choice among eligible actions, references, or plans to Jev. Supply facts, candidate options, one evaluation question, and shared scoring levels from low to high. Returns the highest-scoring option unchanged; ties use input order. Execute the selected option without reranking or substituting another option. This tool does not execute or authorize actions.",
+    promptGuidelines: ["Use sieve_score when comparing several plausible options would require substantial evaluation. Supply only eligible, authorized candidates and a neutral shared rubric without first choosing a winner or encoding one in the rubric. Include necessary facts only: every supplied field is sent to TypeSafe. Follow selected.content using the existing tools; when it is a command, execute that exact command. Normal project rules, validation, and permissions still apply. If unavailable, no decision was made: report the reason and obtain missing evidence or input, rather than claiming a Jev choice. Do not request scores for facts code can determine exactly."],
     parameters: ScoreParameters,
     async execute(_id, input, signal, _update, ctx) {
       const request = new AbortController();
       requests.add(request);
       const combined = AbortSignal.any([request.signal, ...(signal ? [signal] : []), ...(ctx.signal ? [ctx.signal] : [])]);
-      const unavailable = (reason: ScoringResult["reason"]) => ({ available: false, reason, results: [] });
-      const reply = (result: object) => ({ content: [{ type: "text" as const, text: JSON.stringify(result) }], details: result });
+      const unavailable = (reason: ScoringResult["reason"]) => ({ available: false, reason, selected: null, results: [] });
+      const reply = (result: Pick<ScoringResult, "available" | "reason" | "selected">) => ({
+        content: [{ type: "text" as const, text: JSON.stringify({ available: result.available, reason: result.reason, selected: result.selected }) }], details: result,
+      });
       try {
         combined.throwIfAborted();
         if (!ctx.isProjectTrusted()) { diagnostics = { operation: "score", reason: "untrusted_project" }; return reply(unavailable("untrusted_project")); }
