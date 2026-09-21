@@ -16,9 +16,12 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm run check:history
-      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: 'false'
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
-          GITLEAKS_ENABLE_SUMMARY: 'false'
+      - name: Scan complete Git history for secrets
+        run: |
+          gitleaks_version=8.30.1
+          scanner_dir="$RUNNER_TEMP/sieve-gitleaks"
+          mkdir -p "$scanner_dir"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${gitleaks_version}/gitleaks_${gitleaks_version}_linux_x64.tar.gz" -o "$scanner_dir/gitleaks.tar.gz"
+          printf '%s  %s\n' '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$scanner_dir/gitleaks.tar.gz" | sha256sum --check --status
+          tar -xzf "$scanner_dir/gitleaks.tar.gz" -C "$scanner_dir" gitleaks
+          "$scanner_dir/gitleaks" git --log-opts=--all --redact --no-banner --log-level error .
