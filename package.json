@@ -1,6 +1,6 @@
 {
   "name": "pi-sieve",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Caller-defined candidate scoring and on-demand retrieval with Jev for Pi agents.",
   "type": "module",
   "license": "Apache-2.0",

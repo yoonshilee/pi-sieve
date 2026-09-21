@@ -363,9 +363,14 @@ test("delegated choice returns only the selected option without executing it or 
   const fixture = await setup(t, true, false, true);
   const input = { context: "A concurrent retry created a duplicate charge", question: "How useful is this action?",
     criteria: ["No evidence", "Relevant evidence"], options: [{ id: "read_handler", content: "Read the payment handler" }, { id: "test", content: "Run the concurrent retry test" }] };
+  const { context: facts, ...profile } = input;
+  await mkdir(join(fixture.cwd, ".pi/sieve/decisions"), { recursive: true });
+  await writeFile(join(fixture.cwd, ".pi/sieve/decisions/fixture.json"), JSON.stringify(profile));
   const requests: unknown[] = [];
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
     requests.push(JSON.parse(String(init.body)));
+    assert(!String(init.body).includes("fixture.json"));
+    assert(!String(init.body).includes('"profile"'));
     return Response.json({ model: "jev-1.13.0", answers: { q0: { type: "score", score: 0.8, confidence: 0.3, probabilities: { "0": 0.2, "1": 0.8 } }, q1: { type: "score", score: 0.9, confidence: 0.5, probabilities: { "0": 0.1, "1": 0.9 } } } });
   });
   let previous: unknown[] = [];
@@ -377,7 +382,7 @@ test("delegated choice returns only the selected option without executing it or 
         definitions ??= structuredClone(getCurrentTools(context.messages));
         assert.deepEqual(getCurrentTools(context.messages), definitions);
         previous = structuredClone(context.messages);
-        return fauxAssistantMessage(fauxToolCall("sieve_score", input), { stopReason: "toolUse" });
+        return fauxAssistantMessage(fauxToolCall("sieve_score", requests.length ? { context: facts, profile: "fixture" } : input), { stopReason: "toolUse" });
       },
       context => {
         assert.deepEqual(context.messages.slice(0, previous.length), previous);

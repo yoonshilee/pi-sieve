@@ -158,6 +158,40 @@ configuration are private; this repository's ignore rules do not protect other p
 .pi/sieve.json
 ```
 
+## Reuse a decision profile
+
+Use Jev when several plausible actions require substantial evidence comparison,
+or choosing badly would cause significant rework. Execute explicit commands,
+routine tests, and obvious next steps directly. There is no per-stage scoring quota.
+
+Keep recurring candidates and a neutral rubric in a project-authored JSON file:
+
+```sh
+mkdir -p .pi/sieve/decisions
+# Copy and adapt examples/decisions/payment-diagnostic.json from this checkout.
+```
+
+The file contains `question`, `criteria`, and `options` with the same format as
+inline scoring below, but no context. Tell Pi which profile is applicable, then
+it can call:
+
+```json
+{"profile":"payment-diagnostic","context":"The basic payment test passes. The caller supplying retry keys is still unknown."}
+```
+
+Only context and profile name need to be generated again. Profile files are loaded
+on demand from `.pi/sieve/decisions/<name>.json`; their resolved question, rubric,
+and options are sent to Jev. File paths and profile names are not sent automatically.
+Profiles are not automatically discovered or added to the system prompt. Review
+all candidates for current applicability; they are not permission grants. Prefer
+existing profiles over writing a new profile for a one-off choice. Symlinks, files
+over 64 KiB, unknown fields, missing profiles, and mixed inline/profile calls return
+`invalid_input`. New input and mode changes cancel in-flight selection as before.
+
+For scoring workloads, the observed v0.4 requests frequently exceeded the 1.5-second
+default. Set `{"timeoutMs":10000}` in `.pi/sieve.json` if that longer wait is acceptable;
+this applies to retrieval too. A longer timeout improves availability, not speed.
+
 ## Score candidate actions
 
 Ask the main model to propose grounded options and a shared rubric, then use
@@ -306,6 +340,12 @@ injection, capability filtering, and hidden-tool recovery. Existing `pinnedSkill
 `pinnedTools`, and `excludeThreshold` fields are accepted but ignored; remove them
 when updating your configuration. Skills and tools follow Pi's normal settings.
 Previously saved tool results remain ordinary session history.
+
+### Migrating from v0.4
+
+Inline scoring remains supported. The optional `profile` argument reuses project
+files and cannot be combined with inline `question`, `criteria`, or `options`.
+No automatic scoring, tool execution, or conversation caching is introduced.
 
 ### Migrating from v0.3
 

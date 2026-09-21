@@ -1,0 +1,22 @@
+{
+  "question": "Which action gives the most useful new evidence for the current uncertainty, given what is already known?",
+  "criteria": [
+    "Inapplicable, redundant, or no useful evidence",
+    "Some relevant evidence but does not distinguish the unresolved explanations",
+    "Directly distinguishes the unresolved explanations with bounded local work"
+  ],
+  "options": [
+    {
+      "id": "test",
+      "content": "npm test"
+    },
+    {
+      "id": "trace_callers",
+      "content": "rg -n \"pay|handleWebhook\" src test"
+    },
+    {
+      "id": "inspect_state",
+      "content": "cat src/payments.ts src/store.ts"
+    }
+  ]
+}

@@ -10,10 +10,14 @@ to `https://api.typesafe.ai/v1/systemone` contains, for retrieval:
 - Candidate kinds, names, and explicitly authored descriptions from the shortlist.
 - Fixed English relevance questions and the configured model identifier.
 
-For scoring, Jev receives all explicit tool arguments: the model-authored context,
-evaluation question, scoring levels, and option IDs and contents. These can include
+For scoring, Jev receives the model-authored context plus the evaluation question,
+scoring levels, and option IDs and contents. These are supplied inline or loaded
+from an explicitly named project decision profile. Profile names and source paths
+are not automatically included in the request. These can include
 command text or selected observations if the main model puts them in the call.
 Sieve does not automatically collect those observations or run the options.
+Decision profiles are authored project files, not a conversation cache. Their full
+validated content goes to TypeSafe; do not store private facts or credentials in them.
 
 The key is sent only in the Authorization header. Redirects are rejected. There
 is no alternate endpoint, telemetry destination, or automatic retry.

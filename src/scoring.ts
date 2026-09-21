@@ -1,5 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { lstat, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { evaluateJev, isRecord } from "./jev.ts";
 import type { Config, FallbackReason } from "./selection.ts";
 
@@ -8,13 +10,43 @@ const ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$";
 const ROUNDING_ERROR = 0.005;
 const FLOAT_EPSILON = 1e-9;
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
-export const ScoreParameters = Type.Object({
+const InlineParameters = Type.Object({
   context: Type.Union([text(8_000), Type.Record(text(80), text(4_000), { maxProperties: 32 })]),
   question: text(2_000),
   criteria: Type.Array(text(1_000), { minItems: 2, maxItems: 10 }),
   options: Type.Array(Type.Object({ id: Type.String({ pattern: ID_PATTERN }), content: text(4_000) }, { additionalProperties: false }), { minItems: 1, maxItems: 40 }),
 }, { additionalProperties: false });
-export type ScoreInput = Static<typeof ScoreParameters>;
+export type ScoreInput = Static<typeof InlineParameters>;
+const ProfileParameters = Type.Object({
+  question: InlineParameters.properties.question,
+  criteria: InlineParameters.properties.criteria,
+  options: InlineParameters.properties.options,
+}, { additionalProperties: false });
+export const ScoreParameters = Type.Object({
+  context: InlineParameters.properties.context,
+  profile: Type.Optional(Type.String({ pattern: ID_PATTERN, description: "A known project decision profile name; omit question, criteria, and options when supplied." })),
+  question: Type.Optional(InlineParameters.properties.question),
+  criteria: Type.Optional(InlineParameters.properties.criteria),
+  options: Type.Optional(InlineParameters.properties.options),
+}, { additionalProperties: false });
+
+export async function loadScoreInput(cwd: string, input: unknown): Promise<ScoreInput | undefined> {
+  if (!Value.Check(ScoreParameters, input)) return undefined;
+  if (input.profile === undefined) return Value.Check(InlineParameters, input) ? input : undefined;
+  if (input.question !== undefined || input.criteria !== undefined || input.options !== undefined) return undefined;
+  try {
+    let path = cwd;
+    for (const part of [".pi", "sieve", "decisions", `${input.profile}.json`]) {
+      path = join(path, part);
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || (part.endsWith(".json") ? !info.isFile() || info.size > 65_536 : !info.isDirectory())) return undefined;
+    }
+    const content = await readFile(path, "utf8");
+    if (Buffer.byteLength(content) > 65_536) return undefined;
+    const profile: unknown = JSON.parse(content);
+    return Value.Check(ProfileParameters, profile) ? { ...profile, context: input.context } : undefined;
+  } catch { return undefined; }
+}
 export interface OptionScore {
   id: string; score: number; confidence: number; probabilities: number[];
 }
@@ -38,7 +70,7 @@ export async function scoreOptions(input: unknown, config: Config, key?: string,
     elapsedMs: Math.round(performance.now() - started), model: null, inputTokens: null, outputTokens: null,
   });
   if (signal?.aborted) return failure("cancelled");
-  if (!Value.Check(ScoreParameters, input) || input.options.some(option => !option.content.trim()) ||
+  if (!Value.Check(InlineParameters, input) || input.options.some(option => !option.content.trim()) ||
       !input.question.trim() || input.criteria.some(level => !level.trim()) ||
       new Set(input.options.map(option => option.id)).size !== input.options.length) return failure("invalid_input");
   if (!config.enabled) return failure("disabled");

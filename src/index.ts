@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { SCORE_TOOL, ScoreParameters, scoreOptions, type ScoringResult } from "./scoring.ts";
+import { SCORE_TOOL, ScoreParameters, loadScoreInput, scoreOptions, type ScoringResult } from "./scoring.ts";
 import {
   DEFAULTS, SEARCH_TOOL, QUERY_LIMIT, loadConfig, loadDocuments, renderDocuments, selectCandidates,
   type Config,
@@ -62,8 +62,8 @@ export default function sieve(pi: ExtensionAPI): void {
 
   pi.registerTool({
     name: SCORE_TOOL, label: "Sieve Score",
-    description: "Delegate a choice among eligible actions, references, or plans to Jev. Supply facts, candidate options, one evaluation question, and shared scoring levels from low to high. Returns the highest-scoring option unchanged; ties use input order. Execute the selected option without reranking or substituting another option. This tool does not execute or authorize actions.",
-    promptGuidelines: ["Use sieve_score when comparing several plausible options would require substantial evaluation. Supply only eligible, authorized candidates and a neutral shared rubric without first choosing a winner or encoding one in the rubric. Include necessary facts only: every supplied field is sent to TypeSafe. Follow selected.content using the existing tools; when it is a command, execute that exact command. Normal project rules, validation, and permissions still apply. If unavailable, no decision was made: report the reason and obtain missing evidence or input, rather than claiming a Jev choice. Do not request scores for facts code can determine exactly."],
+    description: "Delegate a substantial choice to Jev. Supply context plus either a known project profile name or inline question, criteria, and options. A profile reuses .pi/sieve/decisions/<name>.json without rewriting its candidates or rubric. Returns the highest-scoring option unchanged; ties use input order. Follow the selected action using existing tools. Does not execute or authorize actions.",
+    promptGuidelines: ["Use sieve_score only when multiple plausible options require substantial evidence comparison or a wrong choice would cause significant rework. Skip it for explicit user commands, routine tests, exact code checks, and obvious next steps; never invent alternatives merely to call it. Prefer a known, applicable project profile and concise new facts. Do not guess profile names or recreate unchanged candidates and rubrics each turn. Profiles must contain currently eligible, authorized actions. For inline choices, use a neutral shared rubric without choosing a winner first. Context and the resolved question, criteria, and options go to TypeSafe. Execute selected.content without reranking; exact command options require exact execution. Normal rules and permissions apply. If unavailable, report no decision and obtain missing facts or input."],
     parameters: ScoreParameters,
     async execute(_id, input, signal, _update, ctx) {
       const request = new AbortController();
@@ -86,7 +86,10 @@ export default function sieve(pi: ExtensionAPI): void {
           catch { /* Missing credentials return no fabricated scores. */ }
         }
         combined.throwIfAborted();
-        const result = await scoreOptions(input, config, key, combined);
+        const resolved = await loadScoreInput(ctx.cwd, input);
+        combined.throwIfAborted();
+        if (!resolved) { diagnostics = { operation: "score", reason: "invalid_input" }; return reply(unavailable("invalid_input")); }
+        const result = await scoreOptions(resolved, config, key, combined);
         combined.throwIfAborted();
         diagnostics = { operation: "score", reason: result.reason, evaluated: result.evaluated,
           elapsedMs: result.elapsedMs, model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens };

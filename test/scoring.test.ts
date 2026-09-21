@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULTS } from "../src/selection.ts";
-import { scoreOptions, type ScoreInput } from "../src/scoring.ts";
+import { loadScoreInput, scoreOptions, type ScoreInput } from "../src/scoring.ts";
 
 export const input: ScoreInput = {
   context: { goal: "Locate duplicate charges", observation: "Concurrent retries create duplicates" },
@@ -10,6 +13,31 @@ export const input: ScoreInput = {
   options: [{ id: "inspect", content: "Inspect the idempotency handler" }, { id: "test", content: "Run the concurrent retry test" }],
 };
 const answer = { type: "score", score: 1.75, confidence: 0.5, probabilities: { "0": 0, "1": 0.25, "2": 0.75 } };
+
+test("profiles reuse validated candidates without mixing fields, traversing paths, or following links", async t => {
+  const root = await mkdtemp(join(tmpdir(), "sieve-profile-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, ".pi/sieve/decisions");
+  await mkdir(directory, { recursive: true });
+  const { context, ...profile } = input;
+  const path = join(directory, "fixture.json");
+  await writeFile(path, JSON.stringify(profile));
+  assert.deepEqual(await loadScoreInput(root, { profile: "fixture", context }), input);
+  assert.deepEqual(await loadScoreInput(root, input), input);
+  for (const call of [{ profile: "../fixture", context }, { profile: "missing", context }, { ...input, profile: "fixture" }, { context }, { profile: "fixture", context, unknown: true }])
+    assert.equal(await loadScoreInput(root, call), undefined);
+  await writeFile(path, JSON.stringify({ ...profile, context: "PRIVATE_STORED_CONTEXT" }));
+  assert.equal(await loadScoreInput(root, { profile: "fixture", context }), undefined);
+  await writeFile(path, " ".repeat(65_537));
+  assert.equal(await loadScoreInput(root, { profile: "fixture", context }), undefined);
+  await rm(path);
+  await writeFile(join(root, "outside.json"), JSON.stringify(profile));
+  await symlink(join(root, "outside.json"), path);
+  assert.equal(await loadScoreInput(root, { profile: "fixture", context }), undefined);
+  await rm(directory, { recursive: true });
+  await symlink(root, directory);
+  assert.equal(await loadScoreInput(root, { profile: "outside", context }), undefined);
+});
 
 test("one scoring batch preserves caller rubric, identities, and privacy boundaries", async t => {
   let calls = 0;
