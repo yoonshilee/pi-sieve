@@ -1,0 +1,18 @@
+{
+  "candidates": [
+    { "id": "memory:payment", "kind": "memory", "name": "payment-retries", "description": "Payment retries require idempotency keys.", "body": "A repeated payment key must not create a second charge." },
+    { "id": "guide:payment", "kind": "guide", "name": "payment-tests", "description": "Run tests for duplicate payment requests.", "body": "Inspect the package scripts, then run the payment retry checks." },
+    { "id": "memory:theme", "kind": "memory", "name": "theme", "description": "Theme colors and button contrast.", "body": "Verify foreground contrast on the light and dark backgrounds." },
+    { "id": "skill:review", "kind": "skill", "name": "code-review", "description": "Review code changes for correctness and missing tests." },
+    { "id": "skill:design", "kind": "skill", "name": "interface-design", "description": "Design accessible buttons, forms, and application layouts." },
+    { "id": "tool:database", "kind": "tool", "name": "database-query", "description": "Read payment records and check duplicate database rows." },
+    { "id": "tool:weather", "kind": "tool", "name": "weather", "description": "Read local weather forecasts." },
+    { "id": "tool:browser", "kind": "tool", "name": "browser", "description": "Inspect rendered pages and test interactive controls." }
+  ],
+  "cases": [
+    { "id": "payment-retry", "task": "Fix duplicate payment charges caused by retries.", "required": ["memory:payment", "guide:payment", "tool:database"] },
+    { "id": "button-contrast", "task": "Improve button contrast in the dark theme and inspect the result.", "required": ["memory:theme", "skill:design", "tool:browser"] },
+    { "id": "review-change", "task": "Review the patch for correctness and missing tests.", "required": ["skill:review"] },
+    { "id": "no-reference", "task": "Explain what a prime number is.", "required": [] }
+  ]
+}

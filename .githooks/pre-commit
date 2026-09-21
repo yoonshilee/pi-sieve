@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+node scripts/check-privacy.mjs --staged --identity
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "Gitleaks is required before committing. See README.md." >&2
+  exit 1
+fi
+gitleaks git --pre-commit --staged --redact --no-banner --log-level error .

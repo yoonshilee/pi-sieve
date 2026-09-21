@@ -1,0 +1,10 @@
+node_modules/
+.pi/
+.env
+.env.*
+!.env.example
+*.log
+*.tgz
+coverage/
+results/
+.DS_Store

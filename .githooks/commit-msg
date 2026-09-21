@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+node scripts/check-privacy.mjs --message "$1"
+gitleaks stdin --redact --no-banner --log-level error < "$1"
