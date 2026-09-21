@@ -4,79 +4,99 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  DEFAULTS, isMentioned, loadConfig, loadDocuments, parseConfig, renderDocuments, selectCandidates,
-  type Candidate,
+  DEFAULTS, isMentioned, loadConfig, loadDocuments, localSelection, parseConfig, renderDocuments, selectCandidates,
+  type Candidate, type JevRequest,
 } from "../src/selection.ts";
 
 const candidates: Candidate[] = [
-  { id: "memory:one", kind: "memory", name: "payments", description: "Payment retry behavior", body: "PRIVATE_BODY", path: "/fictional/workspace/memory.md" },
-  { id: "tool:payments", kind: "tool", name: "payment_lookup", description: "Look up a payment" },
-  { id: "tool:weather", kind: "tool", name: "weather", description: "Look up weather" },
-  { id: "skill:report", kind: "skill", name: "report", description: "Write reports", pinned: true },
+  { id: "memory:one", kind: "memory", name: "payment-history", description: "Payment retry behavior", body: "PRIVATE_BODY", path: "/fictional/workspace/memory.md" },
+  { id: "guide:one", kind: "guide", name: "payment-tests", description: "Payment regression checks", body: "PRIVATE_GUIDE", path: "/fictional/workspace/guide.md" },
+  { id: "memory:weather", kind: "memory", name: "weather", description: "Weather forecast", body: "PRIVATE_WEATHER", path: "/fictional/workspace/weather.md" },
 ];
 
-test("selection and outbound privacy", async (t) => {
+test("one batch judges summaries only; local and Jev use the same query and candidates", async (t) => {
   const requests: string[] = [];
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
-    const body = String(options.body);
-    requests.push(body);
-    const request = JSON.parse(body);
-    const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
-      const value = question as { instructions: { candidate?: { name: string } } };
-      return [id, { type: "noul", noul: value.instructions.candidate?.name === "weather" ? 0.1 : 0.9 }];
-    }));
-    return Response.json({ model: DEFAULTS.model, answers, usage: { input_tokens: 100 } });
+    requests.push(String(options.body));
+    const request: JevRequest = JSON.parse(String(options.body));
+    assert.deepEqual(request.state, { query: "payment retry" });
+    assert(!Object.hasOwn(request.questions, "task_context"));
+    return Response.json({ model: DEFAULTS.model, usage: { input_tokens: 100, output_tokens: 12 },
+      answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) =>
+        [id, { type: "noul", noul: question.instructions.candidate.name === "weather" ? 0.1 : 0.9 }])) });
   });
-  const result = await selectCandidates(["Fix payment retries"], candidates, { ...DEFAULTS }, "fixture-only");
+  const query = "payment retry";
+  const result = await selectCandidates(query, candidates, { ...DEFAULTS }, "fixture-only");
+  const local = await selectCandidates(query, candidates, { ...DEFAULTS, enabled: false }, "fixture-only");
   assert.equal(result.fallback, "none");
-  assert.deepEqual([...result.excluded], ["tool:weather"]);
-  assert.equal(result.documents[0].name, "payments");
+  assert.equal(local.fallback, "disabled");
+  assert.deepEqual(result.documents, local.documents);
+  assert.equal(result.evaluated, 3);
   assert.equal(result.inputTokens, 100);
+  assert.equal(result.outputTokens, 12);
+  assert.equal(local.inputTokens, null);
   assert.equal(requests.length, 1);
-  assert(!requests[0].includes("PRIVATE_BODY"));
-  assert(!requests[0].includes("/fictional/"));
-  assert(!requests[0].includes("fixture-only"));
-  assert(!requests[0].includes('"name":"report"'));
-  const limited = await selectCandidates(["payment"], candidates, { ...DEFAULTS, maxCandidates: 1 }, "fixture-only");
-  assert.equal(limited.excluded.size, 0, "Unjudged tools must stay available");
-  assert(isMentioned("Please use /skill:report", "report"));
-  assert(!isMentioned("reporting", "report"));
+  for (const privateText of ["PRIVATE_BODY", "PRIVATE_GUIDE", "/fictional/", "fixture-only"])
+    assert(!requests[0].includes(privateText));
 });
 
-test("missing credentials, invalid answers, service errors, timeouts, and cancellation preserve tools", async (t) => {
-  const missing = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, undefined);
-  assert.equal(missing.fallback, "missing_key");
-  assert.equal(missing.documents.length, 1);
+test("exact names survive negative judgments and obey count and size limits", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    calls++;
+    const request: JevRequest = JSON.parse(String(options.body));
+    assert.equal(Object.keys(request.questions).length, 1);
+    assert(!JSON.stringify(request).includes('"name":"weather"'));
+    return Response.json({ model: DEFAULTS.model, answers: { q0: { type: "noul", noul: 0.01 } } });
+  });
+  const config = { ...DEFAULTS, maxCandidates: 1, maxDocuments: 1 };
+  const result = await selectCandidates("weather payment", candidates, config, "fixture-only");
+  assert.deepEqual(result.documents.map((item) => item.name), ["weather"]);
+  assert.equal(calls, 1);
+  assert(isMentioned("Read payment-tests.", "payment-tests"));
+  assert(!isMentioned("weathering", "weather"));
+  assert(!isMentioned("payment-tests-extra", "payment-tests"));
+  assert.deepEqual(localSelection("weather payment", candidates, config, "disabled").documents, result.documents);
+});
+
+test("invalid probabilities, missing fields, service errors, and oversized replies fall back safely", async (t) => {
   for (const response of [
     Response.json({ model: DEFAULTS.model, answers: {} }),
+    ...[-0.1, 1.1, "0.9", null].map((noul) => Response.json({ model: DEFAULTS.model, answers: { q0: { type: "noul", noul } } })),
+    Response.json({ model: DEFAULTS.model, answers: { q0: { type: "choice", noul: 0.9 } } }),
     new Response("PRIVATE_ERROR_BODY", { status: 429 }),
     new Response("malformed"),
     new Response("x".repeat(70_000)),
   ]) {
     const mock = t.mock.method(globalThis, "fetch", async () => response);
-    const selection = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, "fixture-only");
-    assert(selection.fallback !== "none");
-    assert.equal(selection.excluded.size, 0);
+    const selection = await selectCandidates("payment", candidates, { ...DEFAULTS, maxCandidates: 1 }, "fixture-only");
+    assert.notEqual(selection.fallback, "none");
+    assert.equal(selection.documents.length, 2);
+    assert.equal(selection.inputTokens, null);
     assert(!JSON.stringify(selection).includes("PRIVATE_ERROR_BODY"));
     mock.mock.restore();
   }
-  const mock = t.mock.method(globalThis, "fetch", (_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
-    if (options.signal?.aborted) reject(new Error("PRIVATE_NETWORK_ERROR"));
+});
+
+test("missing credentials, empty queries, timeout, and cancellation have explicit outcomes", async (t) => {
+  assert.equal((await selectCandidates("payment", candidates, { ...DEFAULTS }, undefined)).fallback, "missing_key");
+  assert.equal((await selectCandidates("  ", candidates, { ...DEFAULTS }, "fixture-only")).fallback, "empty_query");
+  assert.equal((await selectCandidates("x".repeat(8001), candidates, { ...DEFAULTS }, "fixture-only")).fallback, "input_too_large");
+  t.mock.method(globalThis, "fetch", (_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
     options.signal?.addEventListener("abort", () => reject(new Error("PRIVATE_NETWORK_ERROR")), { once: true });
   }));
   const keepAlive = setTimeout(() => {}, 1000);
   try {
-    const timed = await selectCandidates(["payment"], candidates, { ...DEFAULTS, timeoutMs: 10 }, "fixture-only");
+    const timed = await selectCandidates("payment", candidates, { ...DEFAULTS, timeoutMs: 10 }, "fixture-only");
     assert.equal(timed.fallback, "timeout");
-    assert.equal(timed.excluded.size, 0);
-    const cancelled = await selectCandidates(["payment"], candidates, { ...DEFAULTS }, "fixture-only", AbortSignal.abort());
+    assert.equal(timed.documents.length, 2);
+    const cancelled = await selectCandidates("payment", candidates, { ...DEFAULTS }, "fixture-only", AbortSignal.abort());
     assert.equal(cancelled.fallback, "cancelled");
-  } finally { clearTimeout(keepAlive); mock.mock.restore(); }
-  const input = await selectCandidates(["x".repeat(8001)], candidates, { ...DEFAULTS }, "fixture-only");
-  assert.equal(input.fallback, "input_too_large");
+    assert.deepEqual(cancelled.documents, []);
+  } finally { clearTimeout(keepAlive); }
 });
 
-test("configuration, document boundaries, and complete-body budget", async (t) => {
+test("configuration migration, document boundaries, and complete-body budget", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "sieve-documents-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   await mkdir(join(cwd, ".pi/sieve/memories"), { recursive: true });
@@ -90,14 +110,26 @@ test("configuration, document boundaries, and complete-body budget", async (t) =
   assert.equal(loaded.skipped, 2);
   assert.equal(loaded.candidates[0].description, "Payment retry behavior");
   assert(renderDocuments(loaded.candidates, 8000).includes("Read the test output first."));
-  const large = [{ ...loaded.candidates[0], body: "x".repeat(9000) }];
-  const rendered = renderDocuments(large, 800);
+  const rendered = renderDocuments([{ ...loaded.candidates[0], body: "x".repeat(9000) }], 800);
   assert(rendered.length <= 800);
   assert(rendered.includes("Read the source"));
-  assert(!rendered.includes("x".repeat(50)), "Do not inject a partial command or instruction");
-  for (const value of [null, { apiKey: "forbidden" }, { timeoutMs: 0 }, { maxCandidates: 0.5 }, { includeThreshold: 2 }, { memoryDirs: [1] }, { constructor: 1 }]) {
+  assert(!rendered.includes("x".repeat(50)), "Never return a partial command or instruction");
+  assert.deepEqual(parseConfig({ pinnedSkills: ["review"], pinnedTools: ["weather"], excludeThreshold: 0.8 }), DEFAULTS);
+  for (const value of [null, { apiKey: "forbidden" }, { timeoutMs: 0 }, { maxCandidates: 0.5 }, { includeThreshold: 2 }, { memoryDirs: [1] }, { constructor: 1 }, { pinnedSkills: 1 }, { excludeThreshold: 2 }])
     assert.throws(() => parseConfig(value), /Invalid Sieve configuration/);
-  }
   await writeFile(join(cwd, ".pi/sieve.json"), "invalid PRIVATE_CONFIG");
   await assert.rejects(loadConfig(cwd), { message: "Invalid Sieve configuration." });
+});
+
+test("a late response after cancellation cannot return references", async (t) => {
+  const controller = new AbortController();
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    const request: JevRequest = JSON.parse(String(options.body));
+    controller.abort();
+    return Response.json({ model: DEFAULTS.model,
+      answers: Object.fromEntries(Object.keys(request.questions).map((id) => [id, { type: "noul", noul: 0.99 }])) });
+  });
+  const result = await selectCandidates("payment", candidates, { ...DEFAULTS }, "fixture-only", controller.signal);
+  assert.equal(result.fallback, "cancelled");
+  assert.deepEqual(result.documents, []);
 });

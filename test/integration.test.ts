@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import sieve from "../src/index.ts";
+import type { JevRequest } from "../src/selection.ts";
 
 async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false) {
   const cwd = await mkdtemp(join(tmpdir(), "sieve-sdk-"));
@@ -75,15 +76,14 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
   });
   const previous = process.env.TYPESAFE_API_KEY;
   process.env.TYPESAFE_API_KEY = "fixture-only";
-  const requests: { state: { user_messages: string[] }; questions: Record<string, unknown> }[] = [];
+  const requests: JevRequest[] = [];
   const authorizations: (string | null)[] = [];
   const fetchMock = t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
-    const request = JSON.parse(String(options.body));
+    const request: JevRequest = JSON.parse(String(options.body));
     requests.push(request);
     authorizations.push(new Headers(options.headers).get("Authorization"));
     return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
-      const entry = question as { instructions: { candidate?: { name: string } } };
-      return [id, { type: "noul", noul: entry.instructions.candidate?.name.includes("weather") ? 0.01 : 0.95 }];
+      return [id, { type: "noul", noul: question.instructions.candidate.name.includes("weather") ? 0.01 : 0.95 }];
     })) });
   });
   t.after(async () => {
@@ -93,7 +93,15 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
     await rm(cwd, { recursive: true, force: true });
     assert.deepEqual(errors, [], "The real Pi extension runner must not report errors");
   });
-  return { cwd, authPath, modelRuntime, authorizations, get session() { return runtime.session; }, get api() { return api; }, runtime, faux, requests, settingsManager };
+  return { cwd, authPath, modelRuntime, authorizations, errors, get session() { return runtime.session; }, get api() { return api; }, runtime, faux, requests, settingsManager };
+}
+
+function search(query = "payment retry rules") {
+  return fauxAssistantMessage(fauxToolCall("sieve_search", { query }), { stopReason: "toolUse" });
+}
+
+function retrieve(faux: ReturnType<typeof fauxProvider>): void {
+  faux.setResponses([search(), fauxAssistantMessage("Finished.")]);
 }
 
 test("native TypeSafe login persists, overrides the environment, survives reload, and logs out", async (t) => {
@@ -110,7 +118,7 @@ test("native TypeSafe login persists, overrides the environment, survives reload
   assert.deepEqual(stored.typesafe, { type: "api_key", key: "stored-fixture" });
   if (process.platform !== "win32") assert.equal((await stat(fixture.authPath)).mode & 0o777, 0o600);
   for (let run = 0; run < 2; run++) {
-    fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+    retrieve(fixture.faux);
     await fixture.session.prompt("Fix payment retries");
     assert.equal(fixture.authorizations.at(-1), "Bearer stored-fixture");
     await fixture.session.reload();
@@ -121,15 +129,12 @@ test("native TypeSafe login persists, overrides the environment, survives reload
   assert(!JSON.stringify(fixture.requests).includes("stored-fixture"));
   await fixture.modelRuntime.logout("typesafe");
   assert(!JSON.parse(await readFile(fixture.authPath, "utf8")).typesafe);
-  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+  retrieve(fixture.faux);
   await fixture.session.prompt("Fix payment retries");
   assert.equal(fixture.authorizations.at(-1), "Bearer fixture-only", "Logout leaves environment credentials available");
   delete process.env.TYPESAFE_API_KEY;
   const requestCount = fixture.requests.length;
-  fixture.faux.setResponses([(context) => {
-    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
-    return fauxAssistantMessage("Finished.");
-  }]);
+  retrieve(fixture.faux);
   await fixture.session.prompt("Fix payment retries");
   assert.equal(fixture.requests.length, requestCount, "Missing credentials must use local fallback");
 });
@@ -137,7 +142,7 @@ test("native TypeSafe login persists, overrides the environment, survives reload
 test("native auth resolves a secret command and cancelled login preserves existing credentials", async (t) => {
   const fixture = await setup(t);
   await writeFile(fixture.authPath, JSON.stringify({ typesafe: { type: "api_key", key: "!printf command-fixture" } }));
-  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
+  retrieve(fixture.faux);
   await fixture.session.prompt("Fix payment retries");
   assert.equal(fixture.authorizations.at(-1), "Bearer command-fixture");
   await assert.rejects(fixture.modelRuntime.login("typesafe", "api_key", {
@@ -154,8 +159,7 @@ test("credential-resolution errors use local fallback without exposing the error
   t.mock.method(ui, "notify", (message: string) => { notifications.push(message); });
   const auth = fixture.modelRuntime.getProvider("typesafe")!.auth.apiKey!;
   t.mock.method(auth, "resolve", async () => { throw new Error("PRIVATE_CREDENTIAL_ERROR"); });
-  fixture.faux.setResponses([(context) => {
-    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
+  fixture.faux.setResponses([search(), (context) => {
     assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
     return fauxAssistantMessage("Finished.");
   }]);
@@ -167,161 +171,190 @@ test("credential-resolution errors use local fallback without exposing the error
   assert(!JSON.stringify(fixture.session.sessionManager.getEntries()).includes("PRIVATE_CREDENTIAL_ERROR"));
 });
 
-test("real Pi filters and restores tools, injects ephemeral references, and preserves project rules", async (t) => {
+test("ordinary input, expanded skills, and other tools never trigger Jev", async (t) => {
+  const { session, faux, requests } = await setup(t);
+  for (const input of ["Fix payment retries", "/skill:review Check the payment changes", "Continue"]) {
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("payment_lookup", {}), { stopReason: "toolUse" }),
+      (context) => {
+        assert(!JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
+        return fauxAssistantMessage("Finished.");
+      },
+    ]);
+    await session.prompt(input);
+  }
+  assert.equal(requests.length, 0);
+  retrieve(faux);
+  await session.prompt("Search the project references");
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].state, { query: "payment retry rules" });
+  const payload = JSON.stringify(requests);
+  for (const privateText of ["PRIVATE_SKILL_BODY", "PRIVATE_TOOL_RESULT", "PRIVATE_MEMORY_BODY", "KEEP_PROJECT_RULE", "KEEP_OTHER_EXTENSION", "user_messages"])
+    assert(!payload.includes(privateText));
+});
+
+test("retrieval appends results without changing tools, skills, rules, or previous messages", async (t) => {
   const { session, api, faux, requests } = await setup(t);
-  faux.setResponses([
-    (context) => {
-      const names = getCurrentTools(context.messages).map((tool) => tool.name);
-      assert(names.includes("read"));
-      assert(names.includes("sieve_search"));
-      assert(!names.includes("weather"));
-      assert(!names.includes("disabled_tool"));
-      assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
-      const prompt = getCurrentSystemPrompt(context.messages);
-      assert(prompt.includes("KEEP_PROJECT_RULE"));
-      assert(prompt.includes("KEEP_OTHER_EXTENSION"));
-      assert(!prompt.includes("weather-skill"));
-      return fauxAssistantMessage(fauxToolCall("sieve_search", { query: "weather" }), { stopReason: "toolUse" });
-    },
-    (context) => {
-      assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
-      return fauxAssistantMessage("Finished.");
-    },
-  ]);
-  await session.prompt("Fix payment retries");
+  const seen: unknown[][] = [];
+  let tools: unknown;
+  let prompt: string | undefined;
+  for (let task = 0; task < 2; task++) {
+    faux.setResponses([
+      (context) => {
+        seen.push(structuredClone(context.messages));
+        tools ??= structuredClone(getCurrentTools(context.messages));
+        prompt ??= getCurrentSystemPrompt(context.messages);
+        assert(prompt.includes("KEEP_PROJECT_RULE"));
+        assert(prompt.includes("KEEP_OTHER_EXTENSION"));
+        assert(prompt.includes("weather-skill"));
+        return search();
+      },
+      (context) => {
+        seen.push(structuredClone(context.messages));
+        assert.deepEqual(getCurrentTools(context.messages), tools);
+        assert.equal(getCurrentSystemPrompt(context.messages), prompt);
+        assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
+        return fauxAssistantMessage(fauxToolCall("payment_lookup", {}), { stopReason: "toolUse" });
+      },
+      (context) => {
+        seen.push(structuredClone(context.messages));
+        assert.deepEqual(getCurrentTools(context.messages), tools);
+        assert.equal(getCurrentSystemPrompt(context.messages), prompt);
+        return fauxAssistantMessage("Finished.");
+      },
+    ]);
+    await session.prompt(task === 0 ? "Fix payment retries" : "Check the next payment issue");
+  }
+  for (let i = 1; i < seen.length; i++) assert.deepEqual(seen[i].slice(0, seen[i - 1].length), seen[i - 1]);
+  assert.equal(requests.length, 2);
   assert(api.getActiveTools().includes("weather"));
   assert(!api.getActiveTools().includes("disabled_tool"));
-  assert.equal(requests.length, 1, "Tool-loop turns must not call Jev again");
-  assert(!JSON.stringify(requests).includes("PRIVATE_MEMORY_BODY"));
-  assert(!JSON.stringify(requests).includes("PRIVATE_TOOL_RESULT"));
-  assert(!JSON.stringify(session.sessionManager.getEntries()).includes("PRIVATE_MEMORY_BODY"));
+  assert(JSON.stringify(session.sessionManager.getEntries()).includes("PRIVATE_MEMORY_BODY"), "Tool results use normal Pi session storage");
+  assert(!JSON.stringify(session.sessionManager.getEntries()).includes("pi-sieve-context"));
 });
 
-test("raw inputs, explicit skills, continuation context, and branch changes", async (t) => {
-  const { session, faux, requests } = await setup(t);
-  for (const prompt of ["Fix payment retries", "/skill:review Check the payment changes", "Continue", "Finish the checks"]) {
-    faux.setResponses([fauxAssistantMessage("Finished.")]);
-    await session.prompt(prompt);
+test("local and Jev retrieval share a tool schema and honor other extensions' restrictions", async (t) => {
+  const { session, api, faux, requests } = await setup(t, true, true);
+  const toolDefinitions: unknown[] = [];
+  for (const toggle of ["off", "on"]) {
+    await session.prompt(`/sieve ${toggle}`);
+    faux.setResponses([
+      (context) => { toolDefinitions.push(structuredClone(getCurrentTools(context.messages))); return search(); },
+      (context) => {
+        assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
+        assert(JSON.stringify(context.messages).includes(toggle === "off" ? "Sieve retrieval: disabled" : "Sieve retrieval: none"));
+        return fauxAssistantMessage("Finished.");
+      },
+    ]);
+    await session.prompt("Find payment retry rules");
+    assert.deepEqual(api.getActiveTools(), ["read", "sieve_search", "weather"]);
   }
-  assert.equal(requests.length, 4);
-  assert.deepEqual(requests[2].state.user_messages, ["Fix payment retries", "/skill:review Check the payment changes", "Continue"]);
-  assert.deepEqual(requests[3].state.user_messages, ["/skill:review Check the payment changes", "Continue", "Finish the checks"]);
-  assert(!JSON.stringify(requests).includes("PRIVATE_SKILL_BODY"));
-  assert(!JSON.stringify(requests[1].questions).includes('"name":"review"'));
-  const first = session.sessionManager.getBranch().find((entry) => entry.type === "message" && entry.message.role === "user");
-  assert(first);
-  await session.navigateTree(first.id, { summarize: false });
-  faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await session.prompt("A separate task");
-  assert.deepEqual(requests.at(-1)!.state.user_messages, ["A separate task"]);
-});
-
-test("new streaming instructions restore hidden tools without another cloud request", async (t) => {
-  const { session, api, faux, requests } = await setup(t);
-  faux.setResponses([
-    async () => {
-      assert(!api.getActiveTools().includes("weather"));
-      await session.steer("Now inspect weather too");
-      assert(api.getActiveTools().includes("weather"));
-      return fauxAssistantMessage("Changed direction.");
-    },
-    fauxAssistantMessage("Finished."),
-  ]);
-  await session.prompt("Fix payment retries");
+  assert.deepEqual(toolDefinitions[0], toolDefinitions[1]);
   assert.equal(requests.length, 1);
 });
 
-test("external restrictions, off mode, and untrusted projects remain intact", async (t) => {
-  const { session, api, faux, requests } = await setup(t);
-  faux.setResponses([() => {
-    api.setActiveTools(["read", "sieve_search"]);
-    return fauxAssistantMessage("Finished.");
-  }]);
-  await session.prompt("Fix payment retries");
-  assert.deepEqual(api.getActiveTools(), ["read", "sieve_search"]);
-  await session.prompt("/sieve off");
-  faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await session.prompt("Fix payment retries again");
-  assert.equal(requests.length, 1);
+test("untrusted projects and invalid configurations return no document content", async (t) => {
+  const fixture = await setup(t, false);
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Find payment retry rules");
+  assert.equal(fixture.requests.length, 0);
+  assert(!JSON.stringify(fixture.session.messages).includes("PRIVATE_MEMORY_BODY"));
+  fixture.settingsManager.setProjectTrusted(true);
+  await writeFile(join(fixture.cwd, ".pi/sieve.json"), "PRIVATE_INVALID_CONFIG");
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Find payment retry rules");
+  assert.equal(fixture.requests.length, 0);
+  assert(!JSON.stringify(fixture.session.messages).includes("PRIVATE_INVALID_CONFIG"));
+  assert(JSON.stringify(fixture.session.messages).includes("invalid_config"));
 });
 
-test("untrusted projects never read private candidates or call Jev", async (t) => {
-  const { session, faux, requests } = await setup(t, false);
-  faux.setResponses([(context) => {
-    assert(!JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
-    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
-    return fauxAssistantMessage("Finished.");
-  }]);
-  await session.prompt("Fix payment retries");
-  assert.equal(requests.length, 0);
-});
-
-test("settling and reloading release exclusions and discard raw history", async (t) => {
+test("off cancels an in-flight search without returning stale bodies or raw errors", async (t) => {
   const fixture = await setup(t);
-  fixture.faux.setResponses([() => {
-    assert(!fixture.api.getActiveTools().includes("weather"));
-    return fauxAssistantMessage("Finished.");
-  }]);
-  await fixture.session.prompt("Fix payment retries");
-  assert(fixture.api.getActiveTools().includes("weather"));
-  await fixture.session.reload();
-  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await fixture.session.prompt("Start another task");
-  assert.deepEqual(fixture.requests.at(-1)!.state.user_messages, ["Start another task"]);
-  fixture.api.setActiveTools(["read"]);
-  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await fixture.session.prompt("No recovery tool is available");
-  assert.equal(fixture.requests.length, 2);
-  assert.deepEqual(fixture.api.getActiveTools(), ["read"]);
-});
-
-test("disabling during an in-flight selection cannot apply a stale result", async (t) => {
-  const { session, api, faux } = await setup(t);
+  const notifications: string[] = [];
+  t.mock.method(fixture.session.extensionRunner!.getUIContext(), "notify", (text: string) => notifications.push(text));
   let started!: () => void;
   const ready = new Promise<void>((resolve) => { started = resolve; });
   t.mock.method(globalThis, "fetch", (_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
     started();
+    options.signal?.addEventListener("abort", () => reject(new Error("PRIVATE_SERVICE_ERROR")), { once: true });
+  }));
+  retrieve(fixture.faux);
+  const running = fixture.session.prompt("Find payment retry rules");
+  await ready;
+  await fixture.session.prompt("/sieve off");
+  await running;
+  await fixture.session.prompt("/sieve status");
+  const history = JSON.stringify(fixture.session.messages);
+  assert(history.includes("cancelled"));
+  assert(!history.includes("PRIVATE_MEMORY_BODY"));
+  assert(!history.includes("PRIVATE_SERVICE_ERROR"));
+  assert(notifications.at(-1)?.includes('"reason":"disabled"'));
+  assert(!JSON.stringify(notifications).includes("PRIVATE_SERVICE_ERROR"));
+});
+
+test("abort cancels retrieval and a new instruction can use the same tool", async (t) => {
+  const fixture = await setup(t);
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  const mock = t.mock.method(globalThis, "fetch", (_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
+    started();
     options.signal?.addEventListener("abort", () => reject(new Error("PRIVATE_ABORT")), { once: true });
   }));
-  faux.setResponses([(context) => {
-    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
-    assert(!JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
-    return fauxAssistantMessage("Finished.");
-  }]);
-  const pending = session.prompt("Fix payment retries");
+  retrieve(fixture.faux);
+  const running = fixture.session.prompt("Find payment retry rules");
   await ready;
-  await session.prompt("/sieve off");
-  await pending;
-  assert(api.getActiveTools().includes("weather"));
+  await fixture.session.abort();
+  await running;
+  assert.deepEqual(fixture.errors.splice(0), ["This operation was aborted"]);
+  mock.mock.restore();
+  assert(!JSON.stringify(fixture.session.messages).includes("PRIVATE_MEMORY_BODY"));
+  retrieve(fixture.faux);
+  await fixture.session.prompt("A new retrieval task");
+  assert.equal(fixture.requests.length, 1);
 });
 
-test("session replacement starts without old raw inputs and disabled tools", async (t) => {
+test("reload, branch navigation, and session replacement keep retrieval isolated", async (t) => {
   const fixture = await setup(t);
-  fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await fixture.session.prompt("Fix payment retries");
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Find payment retry rules");
+  const first = fixture.session.sessionManager.getBranch().find((entry) => entry.type === "message" && entry.message.role === "user");
+  assert(first);
+  await fixture.session.navigateTree(first.id, { summarize: false });
+  await fixture.session.prompt("/sieve off");
+  await fixture.session.reload();
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Search again after reload");
+  assert.equal(fixture.requests.length, 2);
+  await fixture.session.prompt("/sieve off");
   await fixture.runtime.newSession();
   fixture.faux.setResponses([fauxAssistantMessage("Finished.")]);
-  await fixture.session.prompt("Explain a new topic");
-  assert.deepEqual(fixture.requests.at(-1)!.state.user_messages, ["Explain a new topic"]);
-  assert(!fixture.api.getActiveTools().includes("disabled_tool"));
-  delete process.env.TYPESAFE_API_KEY;
-  fixture.faux.setResponses([(context) => {
-    assert(getCurrentTools(context.messages).some((tool) => tool.name === "weather"));
-    assert(JSON.stringify(context.messages).includes("PRIVATE_MEMORY_BODY"));
-    return fauxAssistantMessage("Finished.");
-  }]);
-  await fixture.session.prompt("Fix payment retries without the selector service");
+  await fixture.session.prompt("An unrelated new task");
   assert.equal(fixture.requests.length, 2);
+  assert(!JSON.stringify(fixture.session.messages).includes("PRIVATE_MEMORY_BODY"));
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Search in the new session");
+  assert.equal(fixture.requests.length, 3);
+  assert(!fixture.api.getActiveTools().includes("disabled_tool"));
 });
 
-test("an earlier extension's live tool restrictions survive structured selection", async (t) => {
-  const { session, api, faux } = await setup(t, true, true);
-  faux.setResponses([(context) => {
-    const names = getCurrentTools(context.messages).map((tool) => tool.name);
-    assert(!names.includes("payment_lookup"), "Do not undo an earlier setActiveTools call");
-    assert(!names.includes("weather"));
-    return fauxAssistantMessage("Finished.");
-  }]);
-  await session.prompt("Fix payment retries");
-  assert(!api.getActiveTools().includes("payment_lookup"));
+test("streaming input cancels pending retrieval without uploading the new instruction", async (t) => {
+  const fixture = await setup(t);
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  const mock = t.mock.method(globalThis, "fetch", (_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
+    started();
+    options.signal?.addEventListener("abort", () => reject(new Error("PRIVATE_NETWORK_ERROR")), { once: true });
+  }));
+  retrieve(fixture.faux);
+  const running = fixture.session.prompt("Find payment retry rules");
+  await ready;
+  await fixture.session.steer("PRIVATE_NEW_INSTRUCTION: focus on another module");
+  await running;
+  mock.mock.restore();
+  assert(!JSON.stringify(fixture.session.messages).includes("PRIVATE_MEMORY_BODY"));
+  assert.equal(fixture.requests.length, 0);
+  retrieve(fixture.faux);
+  await fixture.session.prompt("Find references for the current task");
+  assert.equal(fixture.requests.length, 1);
+  assert(!JSON.stringify(fixture.requests).includes("PRIVATE_NEW_INSTRUCTION"));
 });

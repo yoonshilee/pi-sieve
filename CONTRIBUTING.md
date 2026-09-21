@@ -9,7 +9,7 @@ Use Node 22.19+ and the Pi 0.86.1 SDK pinned in the lockfile.
 | --- | --- |
 | `README.md` | Installation, credentials, configuration, and daily use |
 | `PRIVACY.md` | Data sent to providers, local storage, and distribution boundaries |
-| `src/index.ts` | Pi events, provider registration, commands, context, and tool restoration |
+| `src/index.ts` | Provider registration, retrieval tool, cancellation, and diagnostics |
 | `src/selection.ts` | Config parsing, Markdown loading, ranking, Jev requests, and budgets |
 | `examples/` | Fictional reference files, default config, and evaluation cases |
 | `test/` | Selection, Pi SDK integration, package loading, and privacy checks |
@@ -53,31 +53,31 @@ This standalone script requires `TYPESAFE_API_KEY`; it does not run inside Pi or
 read Pi's saved credentials. It sends fixture tasks and descriptions to TypeSafe
 and may incur API charges. It records required-item recall, selected count,
 context characters, selection latency, fallback reason, and reported Jev token
-usage. Character counts are not token counts. The keyword baseline filters all
-optional candidates; runtime failure recovery keeps Pi's skills and tools.
+usage. Character counts are not token counts. Both selectors use the same references
+and query; the local baseline applies the same count and body budgets.
 
 Task outcome and end-to-end latency remain `not_run` and `null`: this benchmark
 does not execute a main agent. To establish a speed or quality gain, run the same
-coding tasks with identical models and permissions under all three conditions.
-Measure objective test outcomes and total latency, including prompt-cache misses
-and tool recovery. Keep private reports in the ignored `results/` directory.
+coding tasks with identical models and permissions under local-only and Jev retrieval conditions.
+Use the same tool definitions and source catalog. Measure necessary-reference
+recall, objective outcomes, model requests, uncached/cached input, output, Jev usage,
+and total latency. Keep fallbacks and unreported usage visible. Scripted responses
+only establish integration behavior, not real relevance or speed. Keep private reports in the ignored `results/` directory.
 
 ## Behavior to preserve
 
-- Only verified raw inputs captured before expansion may go to Jev, at most three
-  on the current branch within 8,000 characters. Never reconstruct them from
-  expanded history. Streaming input clears selection and is not cached.
-- Candidate descriptions are explicitly authored. Bodies and source-path metadata
-  stay out of Jev requests. Discovery stops at 1,000 directory entries and 12 levels.
-- Each unpinned candidate receives its own Noul question; a separate question
-  checks whether the task supplies enough context. Unjudged capabilities stay available.
-- Reference content is transient. Oversized bodies become a description and source
-  reference, not a partial command. Pinned documents still obey count and size budgets.
-- Preserve other extensions' state. Recovery restores only Sieve's own exclusions;
-  it never enables tools disabled before selection. Follow [PRIVACY.md](PRIVACY.md).
-- Resolve TypeSafe credentials through Pi for each task. Pass the resolved key
-  directly to selection; do not copy it into process environment, diagnostics,
-  session entries, or the Jev request body. Keep the provider's chat-model list empty.
+- Only explicit retrieval calls can send a bounded query and authored metadata to
+  Jev. Do not automatically attach history, bodies, source paths, or tool results.
+- The tool schema, existing messages, skills, and tool availability stay unchanged.
+  Results are appended through Pi's normal tool lifecycle and session storage.
+- Local mode and Jev mode share the query, catalog, and output budgets. Exact names
+  take priority. Oversized bodies return a source pointer, never a partial command.
+- Discovery stops at 1,000 entries and 12 levels. Never scan other applications.
+- Cancellation returns no obsolete references and cannot overwrite newer session
+  diagnostics. Do not expose raw credential or service errors.
+- Resolve TypeSafe credentials through Pi for each enabled search; never copy them
+  to environment variables or logs. Keep the authentication provider's chat-model
+  list empty. Follow [PRIVACY.md](PRIVACY.md).
 
 ## Before committing
 

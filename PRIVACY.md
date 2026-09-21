@@ -2,41 +2,39 @@
 
 ## What Jev receives
 
-When automatic selection is enabled, the project is trusted, and
-Pi can resolve a TypeSafe credential, Sieve sends an HTTPS POST to
-`https://api.typesafe.ai/v1/systemone` containing:
+Only an explicit `sieve_search` tool call in a trusted project can make a Jev
+request. When Jev is enabled and Pi can resolve a TypeSafe credential, the request
+to `https://api.typesafe.ai/v1/systemone` contains:
 
-- Up to three verified raw user inputs from the current branch, within the task budget.
-- Candidate kinds, names, and descriptions from the bounded shortlist.
-- Fixed English questions and the configured model identifier.
+- The search query supplied by the main model, within 8,000 characters.
+- Candidate kinds, names, and explicitly authored descriptions from the shortlist.
+- Fixed English relevance questions and the configured model identifier.
 
-The credential is sent only in the Authorization header. Redirects are rejected.
-There is no alternate endpoint, telemetry destination, or automatic retry.
+The key is sent only in the Authorization header. Redirects are rejected. There
+is no alternate endpoint, telemetry destination, or automatic retry.
 
-Sieve does not attach memory/guide bodies, full skill files, expanded prompt
-templates, images, assistant replies, tool results, tool parameter schemas,
-project rules, full history, or source-path metadata to this request. Raw inputs
-that cannot be verified are skipped. Descriptions are explicitly authored;
-Sieve never derives a cloud summary from a private body.
+Sieve does not automatically attach memory/guide bodies, full skill files,
+expanded prompts, attachments, assistant replies, other tool results, project
+rules, full history, or source-path metadata. It does not reconstruct user inputs
+from history or derive summaries from private bodies.
 
-**User inputs and descriptions can themselves contain private data**, including
-paths and credentials. Sieve is not a general-purpose redaction or data-loss
-prevention system. Review those inputs and descriptions before using the cloud
-service. Disable Sieve for tasks that must not reach TypeSafe. The service's
-retention and processing terms are independent of this plugin; consult
-[TypeSafe's policies](https://docs.typesafe.ai/legal).
+**Queries are model-authored, not verified raw user inputs.** The model may copy
+private information, paths, or credentials from its context into a query. Authored
+descriptions can also contain private information. The payload boundary does not
+guarantee that those strings are free of sensitive data. Sieve is not a redaction
+or data-loss prevention system. Use `/sieve off` for local-only retrieval when data
+must not reach TypeSafe. Consult [TypeSafe's policies](https://docs.typesafe.ai/legal)
+for the service's retention and processing terms.
 
 ## What the main model receives
 
-Selected memories and guides are provided to Pi's existing main-model provider.
-They can contain their original local source paths so the model can verify or
-read the full reference. The recovery tool can return matching bodies and skill
-paths, and restore tools previously hidden by Sieve. This is local retrieval,
-not a promise that the main-model provider is local.
+Selected bodies and their source paths are returned to Pi's existing main-model
+provider as a normal tool result. Oversized bodies return a description and source
+pointer. Local retrieval does not mean the main-model provider is local.
 
-Sieve does not overwrite project instructions, bypass permission checks, or
-execute command guides. Jev's decisions are relevance judgments, not security
-authorizations or proof that a reference is correct.
+Sieve never executes command guides or changes skills, tools, or project rules.
+Relevance judgments are not security authorizations or proof of correctness.
+It does not rewrite earlier messages to keep retrieved material at the prompt tail.
 
 ## Credentials
 
@@ -54,21 +52,24 @@ not implement its own credential storage or load `.env` files. Resolved keys go
 only to the fixed TypeSafe endpoint's Authorization header.
 
 Use `/logout` and select TypeSafe to remove the saved credential. Environment
-keys remain available after logout; `/sieve off` stops automatic selection
+keys remain available after logout; `/sieve off` stops Jev requests and cancels pending searches
 regardless of credential source. Protect the user-level Pi directory separately
 from this repository. Removing the plugin does not delete credentials saved by Pi.
 
 ## Local state and logs
 
-Raw input mappings, selection state, and document content stay in memory. Sieve
-does not append them to Pi's session log or create a persistent prompt cache.
-The automatic context block is transient. Normal Pi user messages, main-model
-responses, and explicit recovery-tool results still follow Pi's session storage
-behavior; they may contain private content. Protect Pi sessions and exports.
+Sieve keeps only pending request controllers, an on/off override, and sanitized
+last-search diagnostics in memory. It does not retain a conversation cache,
+persist queries separately, or log requests and responses.
 
-`/sieve status` shows only aggregate counts, duration, model identifier, and a
-fixed reason code. Sieve does not print requests, headers, source paths, raw
-service errors, response bodies, or document content to diagnostic logs.
+**Search queries and returned reference bodies follow normal Pi session storage.**
+They can appear in saved sessions, exports, and subsequent main-model requests.
+This differs from v0.1's transient reference injection. Protect Pi sessions and
+exports; switching Sieve off does not delete earlier tool results.
+
+`/sieve status` shows counts, duration, model identifier, reported token usage,
+and fixed reason codes only. Missing usage is unknown, not zero. It does not print
+queries, headers, source paths, service error bodies, or reference contents.
 
 ## Source control and distribution
 

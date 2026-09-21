@@ -1,14 +1,15 @@
 {
   "enabled": true,
-  "memoryDirs": [".pi/sieve/memories"],
-  "guideDirs": [".pi/sieve/guides"],
-  "pinnedSkills": [],
-  "pinnedTools": [],
+  "memoryDirs": [
+    ".pi/sieve/memories"
+  ],
+  "guideDirs": [
+    ".pi/sieve/guides"
+  ],
   "model": "jev-1.13.0",
   "timeoutMs": 1500,
   "maxCandidates": 40,
   "maxDocuments": 6,
   "contextChars": 8000,
-  "includeThreshold": 0.5,
-  "excludeThreshold": 0.2
+  "includeThreshold": 0.5
 }
