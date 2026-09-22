@@ -41,7 +41,7 @@ temporary `auth.json`, never a developer's real credentials. These tests establi
 integration behavior and data boundaries, not Jev accuracy.
 
 To try a source change without installing the package, run `pi -e ./src/index.ts`.
-For a persistent local installation, follow the [README](README.md#install).
+For a persistent local installation, follow the [README](README.md#development-releases-and-license).
 
 ## Evaluate retrieval
 
@@ -115,17 +115,26 @@ private configuration, and evaluation output stay out. No publishing is automate
 
 ## Publish a GitHub Release
 
-Use GitHub Releases as the user-facing version history. Keep current setup and
-cumulative migration instructions in the README; avoid a second manually maintained
-changelog. One release describes a reviewed version, not every development commit.
+Use GitHub Releases as the user-facing version history. Keep the README focused on
+current capabilities, commands, and examples; put version-specific upgrade notes
+in Releases. Avoid a second manually maintained changelog. One release describes
+a reviewed version, not every development commit.
+
+Within 1.x, the documented public tool names and input/output contracts,
+configuration settings, and slash commands follow semantic versioning. Use patch
+versions for compatible fixes and minor versions for compatible additions;
+breaking changes require a new major version. Model judgments, confidence values,
+and performance are not correctness or speed guarantees. Clearly document any
+experimental defaults and limitations without treating them as permission to
+silently break public interfaces.
 
 1. Set the intended version in `package.json` and the root package entries in
-   `package-lock.json`. Reuse no existing release tag. For pre-1.0 changes, use a
-   new minor version for incompatible behavior and a patch version for fixes.
+   `package-lock.json`. Reuse no existing release tag or change dependencies solely
+   to bump the version.
 2. Review changes since the previous tag and write English notes with **Changes**,
    **Upgrade**, **Compatibility and validation**, and **Known limitations**. For the
-   first release, summarize current capabilities and link the historical migration
-   guide. Do not present historical experiments as evidence for a newer mechanism.
+   first release, summarize current capabilities and link the README's examples.
+   Describe the conditions and limits of any cited experiment.
 3. Run the checks above, commit using the public identity, push the intended
    commit, and wait for that exact commit's GitHub CI to pass.
 4. Create a version tag and Release targeting that exact commit. Save reviewed
@@ -138,7 +147,7 @@ changelog. One release describes a reviewed version, not every development commi
    ```
 
 5. Verify the tag's commit, published notes, and installation of the intended tag
-   in an isolated Pi directory using the [pinned install command](README.md#install).
+   in an isolated Pi directory using the [pinned install command](README.md#more-installation-options).
    Correct code through a new version rather than moving an existing tag. Mark an
    intentionally unfinished release with `--prerelease`.
 

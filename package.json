@@ -1,6 +1,6 @@
 {
   "name": "pi-sieve",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "Batch observation classification and evidence assessment with Jev for Pi agents.",
   "type": "module",
   "license": "Apache-2.0",
