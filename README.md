@@ -12,6 +12,8 @@ earlier context or changing other capabilities.
 is `>=0.86.1 <0.87.0`. Thresholds are experimental; real-world speed and accuracy
 gains have not been established.
 
+[Install](#install) · [Inspect observations](#inspect-existing-observations) · [Commands](#commands-and-status) · [Configuration](#configuration) · [Upgrade](#migration-guide) · [Results](#evaluation-status) · [Releases](#releases)
+
 ## Install
 
 Install from the [GitHub repository](https://github.com/yoonshilee/pi-sieve):
@@ -42,22 +44,16 @@ For project-only removal, add `-l` and run from that project. Reload or restart
 Pi after changing the installation.
 See [Pi package management](https://pi.dev/docs/latest/packages) for details.
 
-### Local development
-
-Clone the repository and install its development dependencies:
+To pin a reviewed version instead of following `main`:
 
 ```sh
-git clone https://github.com/yoonshilee/pi-sieve.git
-cd pi-sieve
-npm ci --ignore-scripts
-pi -e ./src/index.ts
+sieve_version=v0.6.0
+pi install "git:github.com/yoonshilee/pi-sieve@$sieve_version"
 ```
 
-The last command loads Sieve for one session. For persistent local use, run
-`pi install .` instead, then start or reload Pi. Keep the checkout in place:
-Pi references local packages without copying them. After updating the checkout,
-run `npm ci --ignore-scripts` there and reload Pi. Run `pi remove .` from the
-checkout to remove that local installation.
+Pinned installs stay on that tag; install a newer tag explicitly to upgrade.
+See [GitHub Releases](https://github.com/yoonshilee/pi-sieve/releases) for
+version-specific changes and upgrade notes.
 
 ## Configure your TypeSafe key
 
@@ -75,9 +71,9 @@ After installing or reloading the plugin, enter this in interactive Pi:
 
 Paste your key into Pi's API-key dialog. Pi saves it under `typesafe` in its
 user-level `auth.json` (normally `~/.pi/agent/auth.json`). It applies to the next
-search without restarting Pi and is shared across your projects. Sieve registers
-an authentication provider with no chat models, so your main model is unchanged.
-Saving the key does not validate it with TypeSafe; the next Jev-enabled search uses it.
+Jev-enabled tool call without restarting Pi and is shared across your projects.
+Sieve registers an authentication provider with no chat models, so your main model is unchanged.
+Saving the key does not validate it with TypeSafe; the next Jev-enabled tool call uses it.
 
 Pi creates the credential file with `0600` permissions on Unix, but stores literal
 keys as plain text. Its 0.86.1 login dialog can display the entered text; use the
@@ -85,7 +81,8 @@ secret-manager option below if you need to avoid displaying a key in the termina
 To remove the saved credential, run `/logout` and select **TypeSafe**. Pi 0.86.1
 does not accept a provider argument for `/logout`.
 
-### Environment variables and secret managers
+<details>
+<summary>Environment variables and secret managers</summary>
 
 For CI or non-interactive Pi, set `TYPESAFE_API_KEY` before starting the process.
 For a temporary setup in **zsh**, this prompt hides the key and keeps it out of
@@ -123,42 +120,35 @@ for environment references and 1Password examples. Sieve uses Pi's credential
 resolver; it does not maintain a second credential file or load `.env`.
 Keys are not accepted in `.pi/sieve.json`.
 
-## Add memories and guides
+</details>
 
-In the project where you run Pi, create these directories:
+## Commands and status
 
-```sh
-mkdir -p .pi/sieve/memories .pi/sieve/guides
-```
+| Control | Effect |
+| --- | --- |
+| `/sieve status` | Show the latest operation, counts, duration, model, reported token usage, and reason |
+| `/sieve on` | Enable Jev inspection, scoring, and retrieval |
+| `/sieve off` | Return raw observations, disable scoring, and use local keyword retrieval |
+| `sieve_inspect({ source, mode })` | Classify an existing approved observation batch using `outcome` or `evidence` |
+| `sieve_score({ context, question, criteria, options })` | Select one caller-defined candidate for the main model to execute |
+| `sieve_search({ query })` | Retrieve memories and command guides on demand |
 
-Add Markdown files with a name, an uploadable description, and a body:
+On/off overrides last for the current session. Both modes keep exactly the same
+tool definitions. Reloads and session changes reset the override and diagnostics.
+New input, session changes, or switching modes cancel pending requests; cancelled
+operations return no stale content. Completed tool results remain in Pi history.
 
-```markdown
----
-name: payment-retries
-description: Payment retry handling and idempotency checks in this project.
----
+For valid inputs, disabled mode or service failure returns raw inspection batches,
+bounded local retrieval results, or no scoring selection. Each reports an explicit
+reason. Invalid inputs and untrusted projects return no content. There are no
+automatic retries.
+`disabled` means local-only mode, `not_run` means no operation has completed, and
+`none` means a Jev batch succeeded. `/sieve status` contains no query or body text.
+A saved key is not proof of a successful Jev request; check the reported reason.
 
-# Payment retries
-
-Verify that retrying an idempotency key does not create another payment.
-Check the current implementation before relying on this note.
-```
-
-See the fictional [memory](examples/memories/payment-retries.md) and
-[guide](examples/guides/test-payments.md). Examples are not loaded automatically.
-**The search query and descriptions go to Jev; selected bodies go to Pi's main
-model.** Queries are written by the main model and may contain information from
-your conversation. Keep mandatory rules in `AGENTS.md`. Sieve does not select or
-read skills, other applications' memories, or arbitrary tool results.
-
-Add these entries to your target project's `.gitignore` if the references and
-configuration are private; this repository's ignore rules do not protect other projects:
-
-```gitignore
-.pi/sieve/
-.pi/sieve.json
-```
+If `/sieve` is unknown, check `pi list` and reload the extension. For `missing_key`,
+use `/login typesafe`. For `invalid_config`, check the example below. Untrusted
+projects return no references or network requests; use Pi's normal trust flow.
 
 ## Inspect existing observations
 
@@ -211,41 +201,67 @@ Default timeout remains 1.5 seconds; larger experiments must disclose overrides.
 Confidence is not a correctness guarantee or execution permission. There is no
 automatic command execution, retry, global completion verdict, or history rewrite.
 
-## Experimental decision profiles
+## Retrieve memories and guides
 
-Use Jev when several plausible actions require substantial evidence comparison,
-or choosing badly would cause significant rework. Execute explicit commands,
-routine tests, and obvious next steps directly. There is no per-stage scoring quota.
-
-Keep recurring candidates and a neutral rubric in a project-authored JSON file:
+In the project where you run Pi, create these directories:
 
 ```sh
-mkdir -p .pi/sieve/decisions
-# Copy and adapt examples/decisions/payment-diagnostic.json from this checkout.
+mkdir -p .pi/sieve/memories .pi/sieve/guides
 ```
 
-The file contains `question`, `criteria`, and `options` with the same format as
-inline scoring below, but no context. Tell Pi which profile is applicable, then
-it can call:
+Add Markdown files with a name, an uploadable description, and a body:
 
-```json
-{"profile":"payment-diagnostic","context":"The basic payment test passes. The caller supplying retry keys is still unknown."}
+```markdown
+---
+name: payment-retries
+description: Payment retry handling and idempotency checks in this project.
+---
+
+# Payment retries
+
+Verify that retrying an idempotency key does not create another payment.
+Check the current implementation before relying on this note.
 ```
 
-Only context and profile name need to be generated again. Profile files are loaded
-on demand from `.pi/sieve/decisions/<name>.json`; their resolved question, rubric,
-and options are sent to Jev. File paths and profile names are not sent automatically.
-Profiles are not automatically discovered or added to the system prompt. Review
-all candidates for current applicability; they are not permission grants. Prefer
-existing profiles over writing a new profile for a one-off choice. Symlinks, files
-over 64 KiB, unknown fields, missing profiles, and mixed inline/profile calls return
-`invalid_input`. New input and mode changes cancel in-flight selection as before.
+See the fictional [memory](examples/memories/payment-retries.md) and
+[guide](examples/guides/test-payments.md). Examples are not loaded automatically.
+**The search query and descriptions go to Jev; selected bodies go to Pi's main
+model.** Queries are written by the main model and may contain information from
+your conversation. Keep mandatory rules in `AGENTS.md`. Sieve does not select or
+read skills, other applications' memories, or arbitrary tool results.
 
-For scoring workloads, the observed v0.4 requests frequently exceeded the 1.5-second
-default. Set `{"timeoutMs":10000}` in `.pi/sieve.json` if that longer wait is acceptable;
-this applies to retrieval too. A longer timeout improves availability, not speed.
+Add these entries to your target project's `.gitignore` if the references and
+configuration are private; this repository's ignore rules do not protect other projects:
 
-## Score candidate actions
+```gitignore
+.pi/sieve/
+.pi/sieve.json
+```
+
+### Search
+
+Start with `/sieve on`, then ask Pi:
+
+```text
+Use sieve_search to find the payment retry rules and test guide before editing.
+```
+
+The model can call `sieve_search({ "query": "payment retry rules and tests" })`.
+Sieve loads local reference metadata, keyword-ranks candidates, sends one batch
+of independent relevance questions to Jev, and returns selected bodies with their
+source paths. Guides are references, not commands Sieve executes. Ordinary input
+and unrelated tool calls make no Jev requests. The main model decides when to search;
+installing Sieve does not guarantee that every task uses it.
+
+## Experimental action selection
+
+`sieve_score` remains available for explicit next-action delegation. It is
+experimental and is not required for observation inspection or retrieval.
+
+<details>
+<summary>Inline scoring and reusable decision profiles</summary>
+
+### Inline scoring
 
 Ask the main model to propose grounded options and a shared rubric, then use
 `sieve_score` to delegate the next choice. It should not finish the same
@@ -303,69 +319,70 @@ return `available: false`, a reason code, and `selected: null`. No decision was
 made; report the reason and gather missing evidence or user input. Scoring never falls back to invented
 keyword scores and never automatically retries.
 
-## Retrieve references
+### Reusable profiles
 
-Start with `/sieve on`, then ask Pi:
+Use Jev when several plausible actions require substantial evidence comparison,
+or choosing badly would cause significant rework. Execute explicit commands,
+routine tests, and obvious next steps directly. There is no per-stage scoring quota.
 
-```text
-Use sieve_search to find the payment retry rules and test guide before editing.
+Keep recurring candidates and a neutral rubric in a project-authored JSON file:
+
+```sh
+mkdir -p .pi/sieve/decisions
+# Copy and adapt examples/decisions/payment-diagnostic.json from this checkout.
 ```
 
-The model can call `sieve_search({ "query": "payment retry rules and tests" })`.
-Sieve loads local reference metadata, keyword-ranks candidates, sends one batch
-of independent relevance questions to Jev, and returns selected bodies with their
-source paths. Guides are references, not commands Sieve executes. Ordinary input
-and unrelated tool calls make no Jev requests. The main model decides when to search;
-installing Sieve does not guarantee that every task uses it.
+The file contains `question`, `criteria`, and `options` with the same format as
+inline scoring above, but no context. Tell Pi which profile is applicable, then
+it can call:
 
-| Control | Effect |
-| --- | --- |
-| `/sieve status` | Show the latest operation, counts, duration, model, reported token usage, and reason |
-| `/sieve on` | Enable Jev inspection, scoring, and retrieval |
-| `/sieve off` | Return raw observations, disable scoring, and use local keyword retrieval |
-| `sieve_inspect({ source, mode })` | Classify an existing approved observation batch using `outcome` or `evidence` |
-| `sieve_score({ context, question, criteria, options })` | Select one caller-defined candidate for the main model to execute |
-| `sieve_search({ query })` | Retrieve memories and command guides on demand |
+```json
+{"profile":"payment-diagnostic","context":"The basic payment test passes. The caller supplying retry keys is still unknown."}
+```
 
-On/off overrides last for the current session. Both modes keep exactly the same
-tool definitions. Reloads and session changes reset the override and diagnostics.
-New input, session changes, or switching modes cancel pending requests; cancelled
-operations return no stale content. Completed tool results remain in Pi history.
+Only context and profile name need to be generated again. Profile files are loaded
+on demand from `.pi/sieve/decisions/<name>.json`; their resolved question, rubric,
+and options are sent to Jev. File paths and profile names are not sent automatically.
+Profiles are not automatically discovered or added to the system prompt. Review
+all candidates for current applicability; they are not permission grants. Prefer
+existing profiles over writing a new profile for a one-off choice. Symlinks, files
+over 64 KiB, unknown fields, missing profiles, and mixed inline/profile calls return
+`invalid_input`. New input and mode changes cancel in-flight selection as before.
 
-Missing credentials, timeouts, service errors, or invalid answers return bounded
-local results with an explicit fallback reason. There are no automatic retries.
-`disabled` means local-only mode, `not_run` means no operation has completed, and
-`none` means a Jev batch succeeded. `/sieve status` contains no query or body text.
-A saved key is not proof of a successful Jev request; check the reported reason.
+For scoring workloads, the observed v0.4 requests frequently exceeded the 1.5-second
+default. Set `{"timeoutMs":10000}` in `.pi/sieve.json` if that longer wait is acceptable;
+this applies to retrieval too. A longer timeout improves availability, not speed.
 
-If `/sieve` is unknown, check `pi list` and reload the extension. For `missing_key`,
-use `/login typesafe`. For `invalid_config`, check the example below. Untrusted
-projects return no references or network requests; use Pi's normal trust flow.
+</details>
 
-## Configure retrieval
+## Configuration
 
 Defaults work without a configuration file. Copy [examples/sieve.json](examples/sieve.json)
 to `.pi/sieve.json` in your target project to override them. Changes apply to the
-next search. Relative directories resolve from the project working directory.
+next tool call. Relative directories resolve from the project working directory.
 Keys and custom endpoints are not accepted in this file.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
-| `enabled` | `true` | Use Jev for searches; `false` uses local matching |
+| `enabled` | `true` | Enable Jev; `false` returns raw inspection, disables scoring, and uses local retrieval |
 | `memoryDirs` | `[".pi/sieve/memories"]` | Markdown memory directories |
 | `guideDirs` | `[".pi/sieve/guides"]` | Markdown guide directories |
 | `model` | `jev-1.13.0` | Jev model identifier |
 | `timeoutMs` | `1500` | Request deadline, including response reading |
-| `maxCandidates` | `40` | Maximum candidates evaluated per request |
+| `maxCandidates` | `40` | Retrieval shortlist and inspection item limit (inspection also caps at 40) |
 | `maxDocuments` | `6` | Maximum returned memories and guides combined |
 | `contextChars` | `8000` | Character budget for returned reference material |
 | `includeThreshold` | `0.5` | Minimum relevance probability for unnamed documents |
 
-Queries are limited to 8,000 characters. Exact reference names take priority and
+`enabled`, `model`, and `timeoutMs` apply to all three tools. Directory, document,
+character-budget, and relevance-threshold settings apply only to retrieval.
+Scoring has its own fixed option limits.
+
+Retrieval queries are limited to 8,000 characters. Exact reference names take priority and
 are not excluded by Jev. All references still obey document and character limits.
 An oversized body becomes a source pointer and description, not a partial command.
 Malformed Markdown, symlinks, and files over 64 KiB are skipped. Unknown configuration
-fields or invalid values stop that search without returning private content.
+fields or invalid values stop the tool call without returning private content.
 
 The timeout and threshold remain experimental defaults. The historical pilot
 needed a 10-second timeout for reliable responses; that is a separate benchmark
@@ -375,7 +392,7 @@ setting, not a new production default or a speed claim.
 
 Sieve registers fixed tools and appends ordinary tool results. It does not insert
 transient context blocks, rewrite prior messages, or change available skills and
-tools between searches. This avoids Sieve-induced changes to existing request
+tools between operations. This avoids Sieve-induced changes to existing request
 prefixes. Results still add tokens and may be saved in Pi sessions. Provider cache
 hits also depend on routing, retention, compaction, and other extensions; they are
 not guaranteed. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
@@ -384,51 +401,75 @@ Jev can reduce the references the main model needs to inspect, but also adds a
 network request. Small or easily searched catalogs may work better with `/sieve off`.
 Relevance is judged from authored summaries, so missing candidates, inaccurate
 summaries, and stale references remain limitations. Verify important claims against
-the current project. No speed, cost, or accuracy improvement is established for v0.2.
+the current project. No speed, cost, or accuracy improvement is established for retrieval.
 
-### Migrating from v0.1
+## Migration guide
 
-Installation, `/login typesafe`, and the `sieve_search({ query })` signature remain
-unchanged. v0.2 removes automatic per-task selection, raw-input collection, context
-injection, capability filtering, and hidden-tool recovery. Existing `pinnedSkills`,
-`pinnedTools`, and `excludeThreshold` fields are accepted but ignored; remove them
-when updating your configuration. Skills and tools follow Pi's normal settings.
-Previously saved tool results remain ordinary session history.
+Upgrade notes are listed in chronological order. When skipping versions, apply
+each relevant row. Installation and TypeSafe login remain compatible.
 
-### Migrating from v0.4
-
-Inline scoring remains supported. The optional `profile` argument reuses project
-files and cannot be combined with inline `question`, `criteria`, or `options`.
-No automatic scoring, tool execution, or conversation caching is introduced.
-
-### Migrating from v0.5
-
-`sieve_inspect` adds two optional semantic inspection modes. Existing search and
-scoring inputs remain compatible. Inspection reads only explicitly named approved
-batches, and uploads their full observation text when enabled. `/sieve off` returns
-raw observations; it does not replace semantic judgments with keyword labels.
-
-### Migrating from v0.3
-
-The `sieve_score` input signature is unchanged. Its model-visible output now contains
-`selected` instead of a score table. The model follows that selection; it no longer
-uses scores as advice for its own final choice. No command execution is added to
-the plugin. Unavailable responses have `selected: null`.
+| Upgrade | Behavior change | Action |
+| --- | --- | --- |
+| v0.1 → v0.2 | Automatic context injection, input collection, skill/tool filtering, and hidden-tool recovery were removed. | Call `sieve_search` on demand. Remove ignored `pinnedSkills`, `pinnedTools`, and `excludeThreshold` settings. Existing session messages remain. |
+| v0.2 → v0.3 | Optional caller-defined action scoring was added. | No retrieval migration is needed. Scoring is experimental and does not execute commands. |
+| v0.3 → v0.4 | Model-visible scoring output changed from a score table to `selected`; unavailable results contain `selected: null`. | Update consumers to handle the selected option and unavailable state. Inputs remain compatible; normal permissions still apply. |
+| v0.4 → v0.5 | Scoring gained reusable project profiles. | Existing inline calls still work. Use either `profile` or inline question/criteria/options, never both. |
+| v0.5 → v0.6 | Optional `sieve_inspect` outcome/evidence modes were added. | Approve batch text for TypeSafe before enabling inspection. Off/fallback returns raw observations; search and scoring inputs remain compatible. |
 
 ## Evaluation status
 
-The [semantic inspection experiment](https://github.com/yoonshilee/pi-sieve-bench/blob/main/reports/semantic-probe-20260922-sol/analysis.md)
-compares Sol medium interpreting raw observations with Jev inspection across
-12 runs. Main-model tokens were 20.4% lower, with additional Jev usage. Outcome
-labels matched all references; evidence labels matched 69/72, with the same
-label-boundary disagreement in each repeat. No stable speed or monetary-cost
-gain was established. These are small, authored semantic tasks, not completed
-coding workflows; the experiment used a 10-second Jev timeout, not the default.
+The [latest semantic experiment](https://github.com/yoonshilee/pi-sieve-bench/blob/main/reports/semantic-probe-20260922-sol/analysis.md)
+compares Sol medium interpreting raw observations with Jev inspection. These are
+**exploratory component results**, not end-to-end coding performance. Each row
+summarizes three paired runs on the same authored cases.
 
-Full methods, sanitized measurements, and limitations are in
+| Workflow | Main-model tokens: raw → Jev | Label agreement: raw → Jev |
+| --- | ---: | ---: |
+| Operation outcomes | 31,668 → 25,270 | 72/72 → 72/72 |
+| Evidence relationships | 32,092 → 25,458 | 72/72 → 69/72 |
+
+Main-model tokens, including cached input, were **20.4% lower** in total. Jev
+separately used 42,105 input and 7,149 output tokens. Compact labels replaced raw
+observations, so this measures the combined delegation/output-format change, not
+Jev reasoning in isolation. Both arms still made two main-model requests per stage.
+No stable speed or monetary-cost gain was established. All three evidence errors
+repeat the same label-boundary disagreement; strict evidence run success was 0/3.
+The experiment used a 10-second Jev timeout; one call exceeded the 1.5-second default.
+
+Full methods, per-run data, latency, and limitations are in
 [Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench#semantic-observation-comparison-v06).
-Earlier scoring, retrieval, and automatic-context experiments remain historical
-diagnostics, excluded from performance claims for the current mechanism.
+Historical scoring, retrieval, and automatic-context experiments remain archived
+there and do not support performance claims for this mechanism. Broad comparison
+charts are deferred until a downstream workflow test includes evidence production,
+fallbacks, rereads, repairs, and independently checked task outcomes.
+
+## Releases
+
+Each published version has a Git tag and an English
+[GitHub Release](https://github.com/yoonshilee/pi-sieve/releases) describing user-visible
+changes, migration steps, compatibility, validation, and known limitations.
+
+[`v0.6.0`](https://github.com/yoonshilee/pi-sieve/releases/tag/v0.6.0) is the first
+GitHub Release and introduces the current semantic inspection workflow. Earlier
+versions remain in Git history; they are not retroactively published as releases.
+For the maintainer checklist, see [CONTRIBUTING.md](CONTRIBUTING.md#publish-a-github-release).
+
+## Local development
+
+Clone the repository and install its development dependencies:
+
+```sh
+git clone https://github.com/yoonshilee/pi-sieve.git
+cd pi-sieve
+npm ci --ignore-scripts
+pi -e ./src/index.ts
+```
+
+The last command loads Sieve for one session. For persistent local use, run
+`pi install .` instead, then start or reload Pi. Keep the checkout in place:
+Pi references local packages without copying them. After updating the checkout,
+run `npm ci --ignore-scripts` there and reload Pi. Run `pi remove .` from the
+checkout to remove that local installation.
 
 ## Development and license
 
