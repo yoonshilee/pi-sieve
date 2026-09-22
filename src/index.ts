@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { INSPECT_TOOL, InspectionParameters, inspectObservations, inspectionContent, loadObservations } from "./inspection.ts";
 import { SCORE_TOOL, ScoreParameters, loadScoreInput, scoreOptions, type ScoringResult } from "./scoring.ts";
 import {
   DEFAULTS, SEARCH_TOOL, QUERY_LIMIT, loadConfig, loadDocuments, renderDocuments, selectCandidates,
@@ -9,7 +10,7 @@ import {
 const AUTH_PROVIDER = "typesafe";
 interface Diagnostics {
   reason: ScoringResult["reason"];
-  operation?: "search" | "score";
+  operation?: "search" | "score" | "inspect";
   evaluated?: number;
   selected?: number;
   skipped?: number;
@@ -50,13 +51,52 @@ export default function sieve(pi: ExtensionAPI): void {
         cancelRequests();
         enabledOverride = action === "on";
         diagnostics = { reason: action === "off" ? "disabled" : "not_run" };
-        ctx.ui.notify(action === "on" ? "Sieve will use Jev for scoring and search." : "Sieve scoring is disabled; search uses local matching.", "info");
+        ctx.ui.notify(action === "on" ? "Sieve will use Jev for inspection, scoring, and search." : "Sieve scoring is disabled; inspection returns raw observations and search uses local matching.", "info");
       } else if (action === "status") {
         let enabled = enabledOverride ?? DEFAULTS.enabled;
         try { enabled = enabledOverride ?? (await loadConfig(ctx.cwd)).enabled; }
         catch { diagnostics = { reason: "invalid_config" }; }
         ctx.ui.notify(JSON.stringify({ enabled, ...diagnostics }), "info");
       } else ctx.ui.notify("Usage: /sieve status|on|off", "warning");
+    },
+  });
+
+  pi.registerTool({
+    name: INSPECT_TOOL, label: "Sieve Inspect",
+    description: "Read an existing upload-approved observation batch and classify operation outcomes or each observation's support for a hypothesis. Reads .pi/sieve/observations/<source>.json with objective and observations [{id,text}]. Outcome labels: completed, not_applied, partial, unknown. Evidence labels: supports, contradicts, unrelated, insufficient. Returns semantic judgments; when disabled or unavailable returns original observations for caller interpretation. Does not execute actions or prove overall task completion.",
+    promptGuidelines: ["Use sieve_inspect for an existing batch of varied natural-language observations requiring repeated semantic judgments. Do not copy already-read output into a file merely to call it, or use it for exact status/exit-code checks. Outcome asks whether the stated objective happened; evidence asks whether each observation establishes, contradicts, does not address, or lacks proof for the hypothesis. The objective and full observation text go to TypeSafe; use only upload-approved content, never credentials. Original files remain available through read. Unknown or insufficient means obtain evidence, not retry blindly. Existing rules and permissions still apply."],
+    parameters: InspectionParameters,
+    async execute(_id, { source, mode }, signal, _update, ctx) {
+      const request = new AbortController();
+      requests.add(request);
+      const combined = AbortSignal.any([request.signal, ...(signal ? [signal] : []), ...(ctx.signal ? [ctx.signal] : [])]);
+      const failure = (reason: Diagnostics["reason"]) => {
+        if (!combined.aborted) diagnostics = { operation: "inspect", reason };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ available: false, reason, mode }) }], details: { operation: "inspect", reason } };
+      };
+      try {
+        combined.throwIfAborted();
+        if (!ctx.isProjectTrusted()) return failure("untrusted_project");
+        let config: Config;
+        try { config = await loadConfig(ctx.cwd); }
+        catch { combined.throwIfAborted(); return failure("invalid_config"); }
+        config.enabled = enabledOverride ?? config.enabled;
+        const batch = await loadObservations(ctx.cwd, source);
+        combined.throwIfAborted();
+        if (!batch) return failure("invalid_input");
+        let key: string | undefined;
+        if (config.enabled) {
+          try { key = await ctx.modelRegistry.getApiKeyForProvider(AUTH_PROVIDER); }
+          catch { /* Credential resolution failure returns raw observations, never fabricated labels. */ }
+        }
+        combined.throwIfAborted();
+        const result = await inspectObservations(batch, mode, config, key, combined);
+        combined.throwIfAborted();
+        diagnostics = { operation: "inspect", reason: result.reason, evaluated: result.evaluated, elapsedMs: result.elapsedMs,
+          model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+        return { content: [{ type: "text" as const, text: JSON.stringify(inspectionContent(result)) }], details: diagnostics };
+      } catch { return failure(combined.aborted ? "cancelled" : "service_error"); }
+      finally { requests.delete(request); }
     },
   });
 

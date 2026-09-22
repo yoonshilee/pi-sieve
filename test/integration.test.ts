@@ -12,9 +12,10 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import sieve from "../src/index.ts";
+import { INSPECTION_CRITERIA } from "../src/inspection.ts";
 import type { JevRequest } from "../src/selection.ts";
 
-async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false, scoring = false) {
+async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false, scoring = false, inspection = false) {
   const cwd = await mkdtemp(join(tmpdir(), "sieve-sdk-"));
   const agentDir = join(cwd, "agent");
   await mkdir(join(cwd, ".pi/sieve/memories"), { recursive: true });
@@ -52,7 +53,7 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
   const modelRuntime = await ModelRuntime.create({ authPath, modelsPath: null, modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false });
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model: faux.getModel(),
     resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(cwd),
-    tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : [])], thinkingLevel: "off" });
+    tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : []), ...(inspection ? ["sieve_inspect"] : [])], thinkingLevel: "off" });
   const errors: string[] = [];
   session.subscribe((event) => {
     if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
@@ -65,7 +66,7 @@ async function setup(t: TestContext, trusted = true, restrictBeforeSieve = false
     await resourceLoader.reload();
     const result = await createAgentSession({ cwd, agentDir, modelRuntime, resourceLoader, settingsManager,
       sessionManager, sessionStartEvent, model: faux.getModel(), thinkingLevel: "off",
-      tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : [])] });
+      tools: ["read", "sieve_search", "payment_lookup", "weather", ...(scoring ? ["sieve_score"] : []), ...(inspection ? ["sieve_inspect"] : [])] });
     await result.session.bindExtensions({ onError: (error) => errors.push(error.error) });
     result.session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
@@ -103,6 +104,56 @@ function search(query = "payment retry rules") {
 function retrieve(faux: ReturnType<typeof fauxProvider>): void {
   faux.setResponses([search(), fauxAssistantMessage("Finished.")]);
 }
+
+test("inspection uses one request inside a stable tool call, survives session changes, and local mode returns raw evidence", async t => {
+  const fixture = await setup(t, true, false, false, true);
+  await mkdir(join(fixture.cwd, ".pi/sieve/observations"));
+  await writeFile(join(fixture.cwd, ".pi/sieve/observations/sample.json"), JSON.stringify({
+    objective: "Apply the requested update.", observations: [{ id: "a", text: "APPROVED_OBSERVATION: the record was committed." }],
+  }));
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    calls++;
+    const payload = String(init.body);
+    assert(payload.includes("APPROVED_OBSERVATION"));
+    for (const privateText of [fixture.cwd, "PRIVATE_MEMORY_BODY", "PRIVATE_TOOL_RESULT", "PRIVATE_SKILL_BODY"]) assert(!payload.includes(privateText));
+    return Response.json({ model: "jev-1.13.0", answers: { q0: { type: "choice", choice: "completed", confidence: 1,
+      probabilities: Object.fromEntries(Object.keys(INSPECTION_CRITERIA.outcome).map(label => [label, label === "completed" ? 1 : 0])) } } });
+  });
+  fixture.faux.setResponses([fauxAssistantMessage("No inspection needed.")]);
+  await fixture.session.prompt("Say hello");
+  assert.equal(calls, 0);
+  const snapshots: unknown[][] = [];
+  let definitions: unknown;
+  let prompt: string | undefined;
+  for (const enabled of [true, false, true]) {
+    await fixture.session.prompt(enabled ? "/sieve on" : "/sieve off");
+    fixture.faux.setResponses([
+      context => {
+        snapshots.push(structuredClone(context.messages));
+        definitions ??= getCurrentTools(context.messages);
+        prompt ??= getCurrentSystemPrompt(context.messages);
+        return fauxAssistantMessage(fauxToolCall("sieve_inspect", { source: "sample", mode: "outcome" }), { stopReason: "toolUse" });
+      },
+      context => {
+        snapshots.push(structuredClone(context.messages));
+        assert.deepEqual(getCurrentTools(context.messages), definitions);
+        assert.equal(getCurrentSystemPrompt(context.messages), prompt);
+        assert(!fixture.api.getActiveTools().includes("disabled_tool"));
+        const content = JSON.stringify(context.messages.at(-1));
+        assert(content.includes(enabled ? "completed" : "APPROVED_OBSERVATION"));
+        return fauxAssistantMessage("Finished.");
+      },
+    ]);
+    await fixture.session.prompt("Inspect sample");
+  }
+  for (let i = 1; i < snapshots.length; i++) assert.deepEqual(snapshots[i].slice(0, snapshots[i - 1].length), snapshots[i - 1]);
+  assert.equal(calls, 2);
+  await fixture.runtime.newSession();
+  fixture.faux.setResponses([fauxAssistantMessage(fauxToolCall("sieve_inspect", { source: "sample", mode: "outcome" }), { stopReason: "toolUse" }), fauxAssistantMessage("Finished.")]);
+  await fixture.session.prompt("Inspect sample");
+  assert.equal(calls, 3);
+});
 
 test("native TypeSafe login persists, overrides the environment, survives reload, and logs out", async (t) => {
   const fixture = await setup(t);

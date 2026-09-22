@@ -1,16 +1,21 @@
 # Pi Sieve
 
-Delegate a choice to Jev: the main model supplies facts, options, and a shared
-rubric; Sieve selects the highest-scoring option, and the main model executes it
-without reranking. `sieve_score` itself does not execute commands. `sieve_search` remains available for project references.
-Both tools use normal tool messages and leave existing context and capabilities
-unchanged.
+Classify batches of tool observations and assess their support for a hypothesis
+inside one on-demand tool call. `sieve_inspect` reads an existing approved batch,
+asks Jev narrow semantic questions, and returns typed judgments. The main model
+does not need to copy every observation or write repeated question definitions.
+`sieve_search` remains available; generic `sieve_score` is experimental and is not
+the recommended default workflow. Tools append normal messages without rebuilding
+earlier context or changing other capabilities.
 
 **Compatibility:** Pi **0.86.1**, Node **22.19+**. The supported Pi package range
 is `>=0.86.1 <0.87.0`. Thresholds are experimental; real-world speed and accuracy
 gains have not been established.
 
 ## Install
+
+The inspection feature is currently a local development change. GitHub installation
+provides the last pushed version; use the local checkout below to test inspection.
 
 Install from the [GitHub repository](https://github.com/yoonshilee/pi-sieve):
 
@@ -158,7 +163,51 @@ configuration are private; this repository's ignore rules do not protect other p
 .pi/sieve.json
 ```
 
-## Reuse a decision profile
+## Inspect existing observations
+
+An existing diagnostic or retrieval tool can write an upload-approved batch to
+`.pi/sieve/observations/<name>.json`. Only this dedicated directory is read;
+Sieve does not collect arbitrary tool output automatically. Do not make the main
+model read and recopy observations solely to invoke inspection: that duplicates work.
+
+Each batch contains an `objective` and `observations` with unique `id` and `text`
+fields. See [operation outcomes](examples/observations/transaction.json) and
+[hypothesis evidence](examples/observations/hypothesis.json). For a manual demo,
+copy those fictional files into the dedicated directory, then ask Pi to call:
+
+```json
+{"source":"transaction","mode":"outcome"}
+```
+
+```json
+{"source":"hypothesis","mode":"evidence"}
+```
+
+- `outcome` classifies each observation as `completed`, `not_applied`, `partial`,
+  or `unknown` relative to the requested operation.
+- `evidence` classifies each observation as `supports`, `contradicts`, `unrelated`,
+  or `insufficient` relative to the hypothesis. It does not combine separate
+  observations into a causal proof.
+
+The tool uses one batch of independent Choice questions. Files are limited to
+32 KiB and 40 observations (also bounded by `maxCandidates`), with 4,000 characters
+per observation and 2,000 for the objective. Invalid, oversized, or linked files
+are rejected, not silently truncated. Unknown fields and duplicate IDs are invalid.
+Original evidence stays in its file and remains accessible with Pi's `read` tool.
+
+**The full objective and observation text are sent to TypeSafe.** Place only data
+approved for that service here; omit credentials and private paths. This is a
+broader data boundary than description-only retrieval. File names and item IDs
+are not added to the request. See [PRIVACY.md](PRIVACY.md).
+
+`/sieve off` returns the same raw batch for caller interpretation with no Jev call.
+Missing credentials, timeouts, and invalid responses do the same, with an explicit
+reason and no invented labels. Cancellation returns no stale observations or labels.
+Default timeout remains 1.5 seconds; larger experiments must disclose overrides.
+Confidence is not a correctness guarantee or execution permission. There is no
+automatic command execution, retry, global completion verdict, or history rewrite.
+
+## Experimental decision profiles
 
 Use Jev when several plausible actions require substantial evidence comparison,
 or choosing badly would cause significant rework. Execute explicit commands,

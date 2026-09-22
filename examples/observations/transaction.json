@@ -1,0 +1,7 @@
+{
+  "objective": "Apply the requested record update.",
+  "observations": [
+    { "id": "request-a", "text": "The transaction committed. Sending the completion email failed afterward." },
+    { "id": "request-b", "text": "The client lost its connection after sending the request. The transaction ledger has not been checked." }
+  ]
+}

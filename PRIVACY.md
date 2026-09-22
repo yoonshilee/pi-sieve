@@ -2,7 +2,7 @@
 
 ## What Jev receives
 
-Only an explicit `sieve_search` or `sieve_score` tool call in a trusted project can make a Jev
+Only an explicit `sieve_inspect`, `sieve_search`, or `sieve_score` tool call in a trusted project can make a Jev
 request. When Jev is enabled and Pi can resolve a TypeSafe credential, the request
 to `https://api.typesafe.ai/v1/systemone` contains, for retrieval:
 
@@ -19,6 +19,14 @@ Sieve does not automatically collect those observations or run the options.
 Decision profiles are authored project files, not a conversation cache. Their full
 validated content goes to TypeSafe; do not store private facts or credentials in them.
 
+For inspection, Jev receives the full objective and observation texts from an
+explicitly named `.pi/sieve/observations/<source>.json` batch. This directory is
+an upload-approved input boundary, not an automatic log collector. Source names,
+item IDs, and filesystem paths are not added to the payload. Text fields themselves
+can contain private information: review them before making the batch available.
+Do not place credentials or raw private logs here. Sieve does not redact this text.
+Malformed, linked, or oversized inputs are rejected instead of partially uploaded.
+
 The key is sent only in the Authorization header. Redirects are rejected. There
 is no alternate endpoint, telemetry destination, or automatic retry.
 
@@ -26,12 +34,15 @@ Sieve does not automatically attach memory/guide bodies, full skill files,
 expanded prompts, attachments, assistant replies, other tool results, project
 rules, full history, or source-path metadata. It does not reconstruct user inputs
 from history or derive summaries from private bodies.
+Explicit inspection is the exception for approved observation text: it uploads the
+named batch body, which may have been produced by another tool.
 
 **Queries and scoring arguments are model-authored, not verified raw user inputs.** The model may copy
 private information, paths, or credentials from its context into a query. Authored
 descriptions can also contain private information. The payload boundary does not
 guarantee that those strings are free of sensitive data. Sieve is not a redaction
-or data-loss prevention system. Use `/sieve off` to disable scoring and use local-only retrieval when data
+or data-loss prevention system. Use `/sieve off` to disable scoring, return raw inspection
+observations without Jev, and use local-only retrieval when data
 must not reach TypeSafe. Consult [TypeSafe's policies](https://docs.typesafe.ai/legal)
 for the service's retention and processing terms.
 
@@ -43,6 +54,9 @@ pointer. Local retrieval does not mean the main-model provider is local.
 
 Scoring returns the selected option ID and unchanged content to the main model.
 Full scores remain in Pi tool details for diagnostics and session storage.
+Inspection returns per-item labels and confidence, or the original observations
+when disabled or unavailable. Raw fallback content reaches the main-model provider
+and normal session storage. No probabilistic label authorizes an operation.
 Sieve never executes command guides or changes skills, tools, or project rules.
 Relevance judgments are not security authorizations or proof of correctness.
 It does not rewrite earlier messages to keep retrieved material at the prompt tail.
@@ -73,7 +87,8 @@ Sieve keeps only pending request controllers, an on/off override, and sanitized
 last-operation diagnostics in memory. It does not retain a conversation cache,
 persist queries separately, or log requests and responses.
 
-**Search queries, reference bodies, scoring arguments, and scores follow normal Pi session storage.**
+**Search queries, reference bodies, scoring arguments, scores, inspection judgments,
+and raw inspection fallback results follow normal Pi session storage.**
 They can appear in saved sessions, exports, and subsequent main-model requests.
 This differs from v0.1's transient reference injection. Protect Pi sessions and
 exports; switching Sieve off does not delete earlier tool results. Scoring arguments can contain private data even when Sieve itself reads no local files.

@@ -1,0 +1,7 @@
+{
+  "objective": "The described request applied the record update more than once.",
+  "observations": [
+    { "id": "audit-a", "text": "Two distinct committed update entries share the same request identifier." },
+    { "id": "audit-b", "text": "The completion notification was delivered twice. No update ledger entries were retrieved." }
+  ]
+}
