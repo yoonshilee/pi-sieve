@@ -103,7 +103,7 @@ pi
 
 Pi's saved credential takes precedence over `TYPESAFE_API_KEY`. Logging out removes
 the saved credential only; an environment key remains usable. Use `/sieve off` to
-use local search only regardless of the credential source. Restart Pi after
+disable all Jev requests regardless of the credential source. Restart Pi after
 changing its parent environment; `/reload` does not import new shell variables.
 
 Pi also supports a `!command` in `auth.json` to retrieve a key from a secret
@@ -173,7 +173,14 @@ model read and recopy observations solely to invoke inspection: that duplicates 
 Each batch contains an `objective` and `observations` with unique `id` and `text`
 fields. See [operation outcomes](examples/observations/transaction.json) and
 [hypothesis evidence](examples/observations/hypothesis.json). For a manual demo,
-copy those fictional files into the dedicated directory, then ask Pi to call:
+copy those fictional files from this checkout into the dedicated directory:
+
+```sh
+mkdir -p .pi/sieve/observations
+cp examples/observations/transaction.json examples/observations/hypothesis.json .pi/sieve/observations/
+```
+
+Then ask Pi to invoke `sieve_inspect` with either of these arguments:
 
 ```json
 {"source":"transaction","mode":"outcome"}
@@ -317,19 +324,20 @@ installing Sieve does not guarantee that every task uses it.
 | Control | Effect |
 | --- | --- |
 | `/sieve status` | Show the latest operation, counts, duration, model, reported token usage, and reason |
-| `/sieve on` | Enable Jev scoring and retrieval |
-| `/sieve off` | Disable scoring; use local keyword retrieval |
+| `/sieve on` | Enable Jev inspection, scoring, and retrieval |
+| `/sieve off` | Return raw observations, disable scoring, and use local keyword retrieval |
+| `sieve_inspect({ source, mode })` | Classify an existing approved observation batch using `outcome` or `evidence` |
 | `sieve_score({ context, question, criteria, options })` | Select one caller-defined candidate for the main model to execute |
 | `sieve_search({ query })` | Retrieve memories and command guides on demand |
 
 On/off overrides last for the current session. Both modes keep exactly the same
-tool definition. Reloads and session changes reset the override and diagnostics.
-New input, session changes, or switching modes cancel pending searches; cancelled
-searches return no reference content. Completed tool results remain in Pi history.
+tool definitions. Reloads and session changes reset the override and diagnostics.
+New input, session changes, or switching modes cancel pending requests; cancelled
+operations return no stale content. Completed tool results remain in Pi history.
 
 Missing credentials, timeouts, service errors, or invalid answers return bounded
 local results with an explicit fallback reason. There are no automatic retries.
-`disabled` means local-only mode, `not_run` means no search has completed, and
+`disabled` means local-only mode, `not_run` means no operation has completed, and
 `none` means a Jev batch succeeded. `/sieve status` contains no query or body text.
 A saved key is not proof of a successful Jev request; check the reported reason.
 
@@ -395,6 +403,13 @@ Previously saved tool results remain ordinary session history.
 Inline scoring remains supported. The optional `profile` argument reuses project
 files and cannot be combined with inline `question`, `criteria`, or `options`.
 No automatic scoring, tool execution, or conversation caching is introduced.
+
+### Migrating from v0.5
+
+`sieve_inspect` adds two optional semantic inspection modes. Existing search and
+scoring inputs remain compatible. Inspection reads only explicitly named approved
+batches, and uploads their full observation text when enabled. `/sieve off` returns
+raw observations; it does not replace semantic judgments with keyword labels.
 
 ### Migrating from v0.3
 

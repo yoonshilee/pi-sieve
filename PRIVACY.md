@@ -77,7 +77,7 @@ not implement its own credential storage or load `.env` files. Resolved keys go
 only to the fixed TypeSafe endpoint's Authorization header.
 
 Use `/logout` and select TypeSafe to remove the saved credential. Environment
-keys remain available after logout; `/sieve off` stops Jev requests and cancels pending searches
+keys remain available after logout; `/sieve off` stops Jev requests and cancels pending operations
 regardless of credential source. Protect the user-level Pi directory separately
 from this repository. Removing the plugin does not delete credentials saved by Pi.
 
