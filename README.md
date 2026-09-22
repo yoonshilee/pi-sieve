@@ -14,9 +14,6 @@ gains have not been established.
 
 ## Install
 
-The inspection feature is currently a local development change. GitHub installation
-provides the last pushed version; use the local checkout below to test inspection.
-
 Install from the [GitHub repository](https://github.com/yoonshilee/pi-sieve):
 
 ```sh
@@ -420,11 +417,18 @@ the plugin. Unavailable responses have `selected: null`.
 
 ## Evaluation status
 
-Candidate scoring has no established speed, cost, or accuracy improvement.
-Earlier retrieval and automatic-context experiments are historical diagnostics,
-not evidence for this mechanism or future release performance claims. New
-experiments use Sol medium. Benchmark implementation lives in
-[Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench).
+The [semantic inspection experiment](https://github.com/yoonshilee/pi-sieve-bench/blob/main/reports/semantic-probe-20260922-sol/analysis.md)
+compares Sol medium interpreting raw observations with Jev inspection across
+12 runs. Main-model tokens were 20.4% lower, with additional Jev usage. Outcome
+labels matched all references; evidence labels matched 69/72, with the same
+label-boundary disagreement in each repeat. No stable speed or monetary-cost
+gain was established. These are small, authored semantic tasks, not completed
+coding workflows; the experiment used a 10-second Jev timeout, not the default.
+
+Full methods, sanitized measurements, and limitations are in
+[Pi Sieve Bench](https://github.com/yoonshilee/pi-sieve-bench#semantic-observation-comparison-v06).
+Earlier scoring, retrieval, and automatic-context experiments remain historical
+diagnostics, excluded from performance claims for the current mechanism.
 
 ## Development and license
 
